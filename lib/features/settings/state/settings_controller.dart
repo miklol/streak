@@ -66,6 +66,7 @@ class SettingsController extends ChangeNotifier {
     _viewSwitcher = LocalStore.setting('viewSwitcher', true);
     _compactCards = LocalStore.setting('compactCards', false);
     _todosEnabled = LocalStore.setting('todosEnabled', true);
+    _workEnabled = LocalStore.setting('workEnabled', true);
     _sortCompletedLast = LocalStore.setting('sortCompletedLast', true);
     _todayOnly = LocalStore.setting('todayOnly', false);
     _notesEnabled = LocalStore.setting('notesEnabled', true);
@@ -135,6 +136,7 @@ class SettingsController extends ChangeNotifier {
   late bool _viewSwitcher;
   late bool _compactCards;
   late bool _todosEnabled;
+  late bool _workEnabled;
   late int _appStyle;
   late bool _sortCompletedLast;
   late bool _todayOnly;
@@ -282,6 +284,13 @@ class SettingsController extends ChangeNotifier {
   }
 
   bool get todosEnabled => _todosEnabled;
+  bool get workEnabled => _workEnabled;
+
+  Future<void> setWorkEnabled(bool value) async {
+    _workEnabled = value;
+    await LocalStore.writeSetting('workEnabled', value);
+    notifyListeners();
+  }
 
   Future<void> setTodosEnabled(bool value) async {
     _todosEnabled = value;

@@ -21,9 +21,12 @@ import 'package:streak/features/habits/state/habits_controller.dart';
 import 'package:streak/features/island/state/island_controller.dart';
 import 'package:streak/features/habits/state/notes_controller.dart';
 import 'package:streak/features/todos/state/todos_controller.dart';
+import 'package:streak/features/work/state/work_controller.dart';
+import 'package:streak/features/work/state/work_planning_controller.dart';
 import 'package:streak/services/notification_service.dart';
 import 'package:streak/features/settings/state/settings_controller.dart';
 import 'package:streak/services/backup_service.dart';
+import 'package:streak/services/backup_conflict.dart';
 import 'package:streak/services/folder_sync.dart';
 import 'package:streak/services/import_service.dart';
 import 'package:share_plus/share_plus.dart';
@@ -54,6 +57,10 @@ class SettingsActions {
   }
 
   static Future<void> importBackup(BuildContext context) async {
+    if (context.read<FocusController>().isActive) {
+      AppSnackbar.warning(context, context.l10n.work_time_finish_before_restore);
+      return;
+    }
     final controller = context.read<HabitsController>();
     final replace = await _askImportMode(context);
     if (replace == null || !context.mounted) return;
@@ -63,6 +70,9 @@ class SettingsActions {
       context.read<NotesController>().reload();
       context.read<FocusController>().reload();
       context.read<TodosController>().reload();
+      context.read<WorkController>().reload();
+      await context.read<WorkPlanningController>().refreshReminders();
+      if (!context.mounted) return;
       context.read<CategoriesController>().reload();
       AppSnackbar.success(context, context.l10n.habits_imported);
     } else {
@@ -80,12 +90,20 @@ class SettingsActions {
     final habits = context.read<HabitsController>();
     final brought = await LocalStore.guardWrites(FolderSync.pull);
     if (!context.mounted) return;
+    context.read<WorkController>().reload();
+    context.read<FocusController>().reload();
+    await context.read<WorkPlanningController>().refreshReminders();
+    if (!context.mounted) return;
+    if (BackupConflict.pendingPayload(settings.autoBackupFolder) != null) {
+      AppSnackbar.warning(context, context.l10n.refresh_work_conflict);
+      return;
+    }
     if (brought > 0) {
       await habits.reload();
       if (!context.mounted) return;
       context.read<NotesController>().reload();
-      context.read<FocusController>().reload();
       context.read<TodosController>().reload();
+      context.read<WorkController>().reload();
       context.read<CategoriesController>().reload();
     }
     await settings.runAutoBackup(force: true);
@@ -294,6 +312,7 @@ class SettingsActions {
     );
     if (again != true || !context.mounted) return;
 
+    await context.read<FocusController>().cancelActive();
     await NotificationService().cancelAll();
     await LocalStore.wipeEverything();
     if (!context.mounted) return;
@@ -304,6 +323,7 @@ class SettingsActions {
     context.read<TodosController>().reload();
     context.read<CategoriesController>().reload();
     context.read<IslandController>().reload();
+    context.read<WorkController>().reload();
     await context.read<SettingsController>().reloadFromStore();
     if (!context.mounted) return;
     AppSnackbar.success(context, context.l10n.wipe_data_done);

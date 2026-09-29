@@ -620,6 +620,13 @@ List<Widget> _preferenceTiles(BuildContext context) {
           onChanged: settings.setTodosEnabled,
         ),
         _Toggle(
+          icon: LucideIcons.briefcase,
+          title: context.l10n.work,
+          subtitle: context.l10n.work_enable_sub,
+          value: settings.workEnabled,
+          onChanged: settings.setWorkEnabled,
+        ),
+        _Toggle(
           icon: LucideIcons.palmtree,
           title: context.l10n.gamification_beta,
           subtitle: context.l10n.island_enable_sub,

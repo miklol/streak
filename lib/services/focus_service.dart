@@ -4,10 +4,19 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class FocusAction {
-  const FocusAction({required this.kind, required this.at});
+  const FocusAction({
+    required this.kind,
+    required this.at,
+    this.id = '',
+    this.sessionId = '',
+    this.phaseId = '',
+  });
 
+  final String id;
   final String kind;
   final DateTime at;
+  final String sessionId;
+  final String phaseId;
 
   static const pause = 'pause';
   static const resume = 'resume';
@@ -33,6 +42,10 @@ class FocusService {
 
   static Future<void> show({
     required String habitId,
+    required String sessionId,
+    required String phaseId,
+    required String targetKind,
+    required String targetId,
     required String title,
     required String state,
     required String phase,
@@ -45,22 +58,25 @@ class FocusService {
     required String pauseLabel,
     required String resumeLabel,
     required String stopLabel,
-  }) =>
-      _invoke('show', {
-        'habitId': habitId,
-        'title': title,
-        'state': state,
-        'phase': phase,
-        'running': running,
-        'done': done,
-        'countDown': countDown,
-        'seconds': seconds,
-        'anchor': anchor,
-        'channelName': channelName,
-        'pauseLabel': pauseLabel,
-        'resumeLabel': resumeLabel,
-        'stopLabel': stopLabel,
-      });
+  }) => _invoke('show', {
+    'habitId': habitId,
+    'sessionId': sessionId,
+    'phaseId': phaseId,
+    'targetKind': targetKind,
+    'targetId': targetId,
+    'title': title,
+    'state': state,
+    'phase': phase,
+    'running': running,
+    'done': done,
+    'countDown': countDown,
+    'seconds': seconds,
+    'anchor': anchor,
+    'channelName': channelName,
+    'pauseLabel': pauseLabel,
+    'resumeLabel': resumeLabel,
+    'stopLabel': stopLabel,
+  });
 
   static Future<void> hide() => _invoke('hide', const {});
 
@@ -79,12 +95,28 @@ class FocusService {
     }
   }
 
-  static FocusAction _actionFrom(Map<String, dynamic> map) => FocusAction(
-        kind: (map['kind'] ?? '') as String,
-        at: DateTime.fromMillisecondsSinceEpoch(((map['at'] ?? 0) as num).toInt()),
-      );
+  static Future<void> ack(Iterable<FocusAction> actions) async {
+    if (!_available) return;
+    final ids = [
+      for (final action in actions)
+        if (action.id.isNotEmpty) action.id,
+    ];
+    if (ids.isEmpty) return;
+    await _channel.invokeMethod<void>('ack', {'ids': ids});
+  }
 
-  static Future<void> _invoke(String method, Map<String, Object> arguments) async {
+  static FocusAction _actionFrom(Map<String, dynamic> map) => FocusAction(
+    id: (map['id'] ?? '') as String,
+    kind: (map['kind'] ?? '') as String,
+    at: DateTime.fromMillisecondsSinceEpoch(((map['at'] ?? 0) as num).toInt()),
+    sessionId: (map['sessionId'] ?? '') as String,
+    phaseId: (map['phaseId'] ?? '') as String,
+  );
+
+  static Future<void> _invoke(
+    String method,
+    Map<String, Object> arguments,
+  ) async {
     if (!_available) return;
     try {
       await _channel.invokeMethod(method, arguments);

@@ -1,8 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:streak/core/extensions/date_extensions.dart';
 import 'package:streak/features/focus/data/focus_session.dart';
+import 'package:streak/features/focus/data/focus_target.dart';
 
 enum FocusRange { week, month, year }
+
+enum FocusStatsFilter { all, habits, work }
 
 @immutable
 class FocusStats {
@@ -66,17 +69,36 @@ class FocusStats {
     }
   }
 
-  static int _bucketOf(
-    FocusRange range,
-    List<DateTime> buckets,
-    DateTime date,
+  static bool _matches(
+    FocusSession session,
+    FocusStatsFilter filter,
+    String? habitId,
   ) {
-    final day = date.atMidnight;
-    if (range == FocusRange.year) {
-      return day.year == buckets.first.year ? day.month - 1 : -1;
+    if (session.isDeleted) return false;
+    if (habitId != null) {
+      return session.target.kind == FocusTargetKind.habit &&
+          session.target.id == habitId;
     }
-    final index = day.epochDay - buckets.first.epochDay;
-    return index >= 0 && index < buckets.length ? index : -1;
+    return switch (filter) {
+      FocusStatsFilter.all => true,
+      FocusStatsFilter.habits => session.target.kind == FocusTargetKind.habit,
+      FocusStatsFilter.work => session.target.kind == FocusTargetKind.workTask,
+    };
+  }
+
+  static int _secondsInBucket(
+    FocusSession session,
+    FocusRange range,
+    DateTime bucket,
+  ) {
+    if (range == FocusRange.year) {
+      final cutoff = session.isWork ? AppClock.cutoffHour : 0;
+      return session.secondsInPeriod(
+        DateTime(bucket.year, bucket.month, 1, cutoff),
+        DateTime(bucket.year, bucket.month + 1, 1, cutoff),
+      );
+    }
+    return session.secondsOnDay(bucket, cutoffHour: AppClock.cutoffHour);
   }
 
   static FocusStats compute({
@@ -85,11 +107,12 @@ class FocusStats {
     required DateTime now,
     required int weekStart,
     String? habitId,
+    FocusStatsFilter filter = FocusStatsFilter.all,
     int offset = 0,
   }) {
-    final scoped = habitId == null
-        ? sessions
-        : sessions.where((s) => s.habitId == habitId).toList();
+    final scoped = sessions
+        .where((session) => _matches(session, filter, habitId))
+        .toList();
 
     final today = now.atMidnight;
     final weekFrom = today.startOfWeek(weekStart);
@@ -104,21 +127,41 @@ class FocusStats {
     var totalSeconds = 0;
 
     for (final session in scoped) {
-      final day = session.startedAt.atMidnight;
       totalSeconds += session.seconds;
-      if (day.isSameDay(today)) todaySeconds += session.seconds;
-      final weekOffset = day.epochDay - weekFrom.epochDay;
-      if (weekOffset >= 0 && weekOffset < 7) weekSeconds += session.seconds;
-      if (day.year == today.year && day.month == today.month) {
-        monthSeconds += session.seconds;
+      todaySeconds += session.secondsOnDay(
+        today,
+        cutoffHour: AppClock.cutoffHour,
+      );
+      for (var i = 0; i < 7; i++) {
+        weekSeconds += session.secondsOnDay(
+          weekFrom.addDays(i),
+          cutoffHour: AppClock.cutoffHour,
+        );
+      }
+      final monthDays = DateTime(today.year, today.month + 1, 0).day;
+      for (var i = 1; i <= monthDays; i++) {
+        monthSeconds += session.secondsOnDay(
+          DateTime(today.year, today.month, i),
+          cutoffHour: AppClock.cutoffHour,
+        );
       }
 
-      final index = _bucketOf(range, buckets, session.startedAt);
-      if (index < 0) continue;
-      rangeCount++;
-      series[index] += session.seconds;
-      perHabit[session.habitId] =
-          (perHabit[session.habitId] ?? 0) + session.seconds;
+      var inRange = false;
+      for (var i = 0; i < buckets.length; i++) {
+        final seconds = _secondsInBucket(session, range, buckets[i]);
+        if (seconds == 0) continue;
+        inRange = true;
+        series[i] += seconds;
+      }
+      if (inRange) {
+        rangeCount++;
+        if (session.target.kind == FocusTargetKind.habit) {
+          perHabit[session.target.id] =
+              (perHabit[session.target.id] ?? 0) + session.seconds;
+        } else if (session.target.kind == FocusTargetKind.free) {
+          perHabit[''] = (perHabit[''] ?? 0) + session.seconds;
+        }
+      }
     }
 
     return FocusStats(

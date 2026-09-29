@@ -17,6 +17,8 @@ class TodoTile extends StatelessWidget {
     required this.onEdit,
     required this.overdue,
     this.corners,
+    this.onMoveToWork,
+    this.busy = false,
   });
 
   final Todo todo;
@@ -24,6 +26,8 @@ class TodoTile extends StatelessWidget {
   final VoidCallback onEdit;
   final bool overdue;
   final BorderRadius? corners;
+  final VoidCallback? onMoveToWork;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +37,7 @@ class TodoTile extends StatelessWidget {
     final due = todo.due;
 
     return GestureDetector(
-      onTap: onEdit,
+      onTap: busy ? null : onEdit,
       behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
@@ -57,7 +61,7 @@ class TodoTile extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 15.5,
                       fontWeight: FontWeight.w600,
-                      height: 1.3,
+                      height: 1.4,
                       color: todo.done ? muted : scheme.onSurface,
                       decoration: todo.done ? TextDecoration.lineThrough : null,
                       decorationColor: muted,
@@ -71,7 +75,7 @@ class TodoTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 13,
-                        height: 1.35,
+                        height: 1.4,
                         color: muted,
                       ),
                     ),
@@ -114,7 +118,24 @@ class TodoTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 10),
-            _CheckButton(todo: todo, onToggle: onToggle),
+            _CheckButton(todo: todo, onToggle: busy ? null : onToggle),
+            if (onMoveToWork != null)
+              PopupMenuButton<String>(
+                tooltip: context.l10n.work_actions_for(todo.title),
+                enabled: !busy,
+                onSelected: (action) {
+                  if (action == 'edit') onEdit();
+                  if (action == 'work') onMoveToWork!();
+                },
+                itemBuilder: (_) => [
+                  PopupMenuItem(value: 'edit', child: Text(context.l10n.edit)),
+                  PopupMenuItem(value: 'work', child: Text(context.l10n.work_move_todo)),
+                ],
+                icon: busy
+                    ? const SizedBox.square(dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(LucideIcons.ellipsisVertical, size: 19),
+              ),
           ],
         ),
       ),
@@ -140,12 +161,19 @@ class _MetaLabel extends StatelessWidget {
       children: [
         Icon(icon, size: 12, color: color),
         const SizedBox(width: 5),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: color,
+        Flexible(
+          child: Tooltip(
+            message: label,
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
+            ),
           ),
         ),
       ],
@@ -157,30 +185,29 @@ class _CheckButton extends StatelessWidget {
   const _CheckButton({required this.todo, required this.onToggle});
 
   final Todo todo;
-  final VoidCallback onToggle;
+  final VoidCallback? onToggle;
 
   @override
   Widget build(BuildContext context) {
     final scheme = context.colors;
     final circle = context.watch<SettingsController>().isCircleCheck;
     final radius = BorderRadius.circular(circle ? 13 : 8);
+    final label = todo.done ? context.l10n.a11y_mark_not_done(todo.title)
+        : context.l10n.a11y_mark_done(todo.title);
 
-    return Semantics(
+    return Tooltip(message: label, excludeFromSemantics: true,
+      child: MergeSemantics(child: Semantics(
       container: true,
-      button: true,
+      label: label,
       checked: todo.done,
-      label: todo.done
-          ? context.l10n.a11y_mark_not_done(todo.title)
-          : context.l10n.a11y_mark_done(todo.title),
-      excludeSemantics: true,
-      child: GestureDetector(
-        onTap: () {
+      child: IconButton(
+        onPressed: onToggle == null ? null : () {
           HapticFeedback.selectionClick();
-          onToggle();
+          onToggle!();
         },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        padding: const EdgeInsets.all(11),
+        icon: Container(
           width: 26,
           height: 26,
           decoration: BoxDecoration(
@@ -198,7 +225,6 @@ class _CheckButton extends StatelessWidget {
               : null,
         ),
       ),
-    );
+    )));
   }
 }
-

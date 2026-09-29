@@ -151,6 +151,7 @@ class FocusAudio {
   }
 
   static Future<void> stop() async {
+    if (!playing.value && current.value.isEmpty) return;
     await _player.stop();
     playing.value = false;
     current.value = '';

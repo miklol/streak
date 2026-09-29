@@ -23,6 +23,10 @@ import 'package:streak/features/settings/state/settings_controller.dart';
 import 'package:streak/features/statistics/pages/statistics_page.dart';
 import 'package:streak/features/todos/pages/todos_page.dart';
 import 'package:streak/features/todos/state/todos_controller.dart';
+import 'package:streak/features/work/state/work_controller.dart';
+import 'package:streak/features/goals/state/goals_controller.dart';
+import 'package:streak/features/work/state/work_planning_controller.dart';
+import 'package:streak/features/work/pages/work_task_page.dart';
 import 'package:streak/services/focus_service.dart';
 import 'package:streak/services/folder_sync.dart';
 import 'package:streak/services/home_widget_service.dart';
@@ -72,6 +76,7 @@ Future<void> _startup() async {
 
   NotificationService.onOpenHabit = _openHabit;
   NotificationService.onOpenTodos = _openTodos;
+  NotificationService.onOpenWorkTask = _openWorkTask;
   FocusService.onPending = drainFocusActions;
   FocusService.listen();
   try {
@@ -102,6 +107,15 @@ Future<void> _startup() async {
       NotificationService().pendingHabitId = null;
       _openHabit(pending);
     }
+    final workTask = NotificationService().pendingWorkTaskId;
+    if (workTask != null) {
+      NotificationService().pendingWorkTaskId = null;
+      _openWorkTask(workTask);
+    }
+    final appContext = AppNavigator.key.currentContext;
+    if (appContext != null) {
+      await appContext.read<WorkPlanningController>().refreshReminders();
+    }
     if (Platform.isAndroid) {
       final launched =
           await _appChannel.invokeMethod<String>('consumeLaunchHabit');
@@ -122,6 +136,11 @@ void _run() {
         ChangeNotifierProvider(create: (_) => SettingsController()),
         ChangeNotifierProvider(create: (_) => CategoriesController()),
         ChangeNotifierProvider(create: (_) => NotesController()),
+        ChangeNotifierProvider(create: (_) => WorkController()),
+        ChangeNotifierProvider(
+          create: (context) => WorkPlanningController(context.read<WorkController>()),
+          lazy: false,
+        ),
         ChangeNotifierProvider(
           create: (_) {
             final controller = TodosController();
@@ -139,6 +158,8 @@ void _run() {
             return controller;
           },
         ),
+        ChangeNotifierProvider(create: (context) => GoalsController(
+          context.read<WorkController>(), context.read<HabitsController>())),
       ],
       child: const StreakApp(),
     ),
@@ -153,6 +174,15 @@ void _openHabit(String habitId) {
 
 void _openTodos() {
   AppNavigator.push(const TodosPage(), fade: true);
+}
+
+void _openWorkTask(String taskId) {
+  final task = LocalStore.readWork().tasks.where((task) => task.id == taskId);
+  if (task.isEmpty || task.first.isDeleted) {
+    debugPrint('Work reminder target is no longer available: $taskId');
+    return;
+  }
+  AppNavigator.push(WorkTaskPage(taskId: taskId), fade: true);
 }
 
 void _openPage(String page) {

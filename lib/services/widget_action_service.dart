@@ -7,6 +7,7 @@ import 'package:streak/core/extensions/date_extensions.dart';
 import 'package:streak/features/habits/data/completion_ops.dart';
 import 'package:streak/features/habits/data/habit.dart';
 import 'package:streak/features/todos/data/todo.dart';
+import 'package:streak/features/work/data/todo_move_exception.dart';
 
 class WidgetActionService {
   const WidgetActionService._();
@@ -41,11 +42,18 @@ class WidgetActionService {
       final habit = habits[id];
       if (habit != null) await LocalStore.writeHabit(habit);
     }
+    var writtenTodos = 0;
     for (final todo in ticked) {
-      await LocalStore.writeTodo(todo);
+      try {
+        await LocalStore.writeTodo(todo, requireExisting: true);
+        writtenTodos++;
+      } on TodoMoveException catch (error) {
+        todos.removeWhere((item) => item.id == todo.id);
+        debugPrint('Widget action for removed or moved to-do skipped: $error');
+      }
     }
     await _clear(pending.length);
-    return touched.isNotEmpty || ticked.isNotEmpty;
+    return touched.isNotEmpty || writtenTodos > 0;
   }
 
   static Todo? _applyTodo(List<Todo> todos, Uri uri) {

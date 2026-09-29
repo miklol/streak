@@ -28,6 +28,7 @@ class MinimalFocusStatsPage extends StatefulWidget {
 
 class _MinimalFocusStatsPageState extends State<MinimalFocusStatsPage> {
   FocusRange _range = FocusRange.week;
+  FocusStatsFilter _filter = FocusStatsFilter.all;
   int _offset = 0;
 
   @override
@@ -45,6 +46,7 @@ class _MinimalFocusStatsPageState extends State<MinimalFocusStatsPage> {
       now: AppClock.now(),
       weekStart: context.watch<SettingsController>().weekStart,
       habitId: widget.habitId,
+      filter: _filter,
     );
 
     final ranked = [
@@ -87,6 +89,21 @@ class _MinimalFocusStatsPageState extends State<MinimalFocusStatsPage> {
                   padding: context.pagePadding(20, 0, 20, 40),
                   children: [
                     MinimalTitle(title: title),
+                    if (widget.habitId == null) ...[
+                      MinimalSegmented(
+                        options: [
+                          context.l10n.all,
+                          context.l10n.your_habits,
+                          context.l10n.work,
+                        ],
+                        index: FocusStatsFilter.values.indexOf(_filter),
+                        onChanged: (index) => setState(() {
+                          _filter = FocusStatsFilter.values[index];
+                          _offset = 0;
+                        }),
+                      ),
+                      const SizedBox(height: 18),
+                    ],
                     MinimalGrid(
                       children: [
                         MinimalTile(

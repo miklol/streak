@@ -56,13 +56,20 @@ void main() {
       (tester) async {
     final focus = await _pumpPill(tester);
 
-    focus.start(habitId: '', targetMinutes: 0);
-    focus.pause(at: DateTime.now().add(const Duration(minutes: 3)));
+    await tester.runAsync(() async {
+      focus.start(habitId: '', targetMinutes: 0);
+      focus.pause(at: DateTime.now().add(const Duration(minutes: 3)));
+      await focus.ready;
+    });
     await tester.pump();
     expect(find.text('03:00'), findsOneWidget);
 
-    focus.start(habitId: '', targetMinutes: 25);
-    focus.pause(at: DateTime.now().add(const Duration(minutes: 3)));
+    await tester.runAsync(() async {
+      await focus.stop(completed: false);
+      focus.start(habitId: '', targetMinutes: 25);
+      focus.pause(at: DateTime.now().add(const Duration(minutes: 3)));
+      await focus.ready;
+    });
     await tester.pump();
     expect(find.text('22:00'), findsOneWidget);
   });

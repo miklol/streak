@@ -18,71 +18,69 @@ class FocusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!context.watch<SettingsController>().focusEnabled) {
-      return const SizedBox.shrink();
-    }
-
     final focus = context.watch<FocusController>();
     final active = focus.isActive;
+    if (!context.watch<SettingsController>().focusEnabled && !active) {
+      return const SizedBox.shrink();
+    }
     final accent = context.colors.primary;
 
-    void open() => active
-        ? AppNavigator.push(
-            const FocusPage(),
-            fade: true,
-            name: FocusPage.routeName,
-          )
-        : AppNavigator.push(const FocusSetupPage(), fullscreenDialog: true);
+    void open() {
+      if (active && AppNavigator.isShowing(FocusPage.routeName)) return;
+      active
+          ? AppNavigator.push(
+              const FocusPage(),
+              fade: true,
+              name: FocusPage.routeName,
+            )
+          : AppNavigator.push(const FocusSetupPage(), fullscreenDialog: true);
+    }
 
     if (compact && !active) {
       return IconButton(
+        tooltip: context.l10n.focus,
         onPressed: open,
-        icon: Icon(LucideIcons.timer, size: 22, color: context.colors.onSurface),
+        icon: Icon(
+          LucideIcons.timer,
+          size: 22,
+          color: context.colors.onSurface,
+        ),
       );
     }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Semantics(
-        button: true,
-        child: GestureDetector(
-          onTap: open,
-          child: Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: dense ? 9 : 12,
-              vertical: dense ? 7 : 8,
-            ),
-            decoration: BoxDecoration(
-              color: active
-                  ? accent.withValues(alpha: 0.16)
-                  : context.colors.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(14),
-              border: active
-                  ? Border.all(color: accent.withValues(alpha: 0.6))
-                  : null,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  LucideIcons.timer,
-                  size: dense ? 15 : 16,
-                  color: active ? accent : context.tokens.muted,
-                ),
-                SizedBox(width: dense ? 5 : 6),
-                Text(
-                  active
-                      ? formatDuration(focus.displaySeconds)
-                      : context.l10n.focus,
-                  style: TextStyle(
-                    fontSize: dense ? 12.5 : 13.5,
-                    fontWeight: FontWeight.w700,
-                    color: active ? accent : context.tokens.muted,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
-            ),
+      child: TextButton.icon(
+        onPressed: open,
+        style: TextButton.styleFrom(
+          backgroundColor: active
+              ? accent.withValues(alpha: 0.16)
+              : context.colors.surfaceContainerHighest,
+          foregroundColor: active ? accent : context.tokens.muted,
+          minimumSize: const Size(44, 44),
+          padding: EdgeInsets.symmetric(
+            horizontal: dense ? 9 : 12,
+            vertical: 8,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          side: active
+              ? BorderSide(color: accent.withValues(alpha: 0.6))
+              : null,
+        ),
+        icon: Icon(
+          LucideIcons.timer,
+          size: dense ? 15 : 16,
+          color: active ? accent : context.tokens.muted,
+        ),
+        label: Text(
+          active ? formatDuration(focus.displaySeconds) : context.l10n.focus,
+          style: TextStyle(
+            fontSize: dense ? 12.5 : 13.5,
+            fontWeight: FontWeight.w700,
+            color: active ? accent : context.tokens.muted,
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
       ),

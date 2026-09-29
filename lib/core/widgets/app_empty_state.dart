@@ -27,10 +27,9 @@ class AppEmptyState extends StatelessWidget {
     final style = sheetStyle(context);
     final glyph = Icon(icon, size: compact ? 32 : 46, color: scheme.primary);
 
-    return Center(
+    final content = Center(
       child: Padding(
         padding: EdgeInsets.symmetric(
-
           horizontal: compact ? 8 : 40,
           vertical: compact ? 28 : 40,
         ),
@@ -38,7 +37,6 @@ class AppEmptyState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-
             if (style == 2)
               ExpressBlob(
                 size: haloSize,
@@ -55,9 +53,7 @@ class AppEmptyState extends StatelessWidget {
                   borderRadius: style == 1
                       ? BorderRadius.circular(haloSize / 3.2)
                       : null,
-                  color: style == 1
-                      ? scheme.surfaceContainer
-                      : null,
+                  color: style == 1 ? scheme.surfaceContainer : null,
                   gradient: style == 1
                       ? null
                       : RadialGradient(
@@ -94,6 +90,17 @@ class AppEmptyState extends StatelessWidget {
           ],
         ),
       ),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!constraints.hasBoundedHeight) return content;
+        return SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: content,
+          ),
+        );
+      },
     );
   }
 }

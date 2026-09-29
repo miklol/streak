@@ -1,5 +1,5 @@
-
 import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import 'package:streak/app/theme/app_palette.dart';
@@ -36,12 +36,16 @@ import 'package:streak/features/habits/widgets/minimal_substeps.dart';
 import 'package:streak/features/habits/widgets/reminder_editor_sheet.dart';
 import 'package:streak/features/habits/widgets/reminder_tile.dart';
 import 'package:streak/features/settings/state/settings_controller.dart';
+import 'package:streak/features/goals/state/goals_controller.dart';
+import 'package:streak/features/goals/widgets/goal_ui.dart';
+import 'package:streak/features/goals/widgets/related_goals_section.dart';
 import 'package:streak/services/notification_service.dart';
 
 class HabitFormPage extends StatefulWidget {
-  const HabitFormPage({super.key, this.habit});
+  const HabitFormPage({super.key, this.habit, this.relatedGoalId});
 
   final Habit? habit;
+  final String? relatedGoalId;
 
   bool get isEditing => habit != null;
 
@@ -50,6 +54,10 @@ class HabitFormPage extends StatefulWidget {
 }
 
 class _HabitFormPageState extends State<HabitFormPage> {
+  late final String _habitId = widget.habit?.id ?? const Uuid().v4();
+  late Set<String> _relatedGoalIds;
+  bool _saving = false;
+  String? _saveError;
   late final TextEditingController _name;
   late final TextEditingController _description;
   late final TextEditingController _unitLabel;
@@ -81,7 +89,9 @@ class _HabitFormPageState extends State<HabitFormPage> {
   int _durationMinutes = 0;
   late List<Substep> _substeps;
 
-  bool get _kindLocked => widget.isEditing;
+  bool get _kindLocked =>
+      widget.isEditing ||
+      context.read<HabitsController>().byId(_habitId) != null;
 
   bool get _planning => context.watch<SettingsController>().planningEnabled;
 
@@ -106,6 +116,13 @@ class _HabitFormPageState extends State<HabitFormPage> {
   @override
   void initState() {
     super.initState();
+    _relatedGoalIds = {
+      for (final link in context.read<GoalsController>().linksForHabit(
+        _habitId,
+      ))
+        link.goalId,
+      if (widget.relatedGoalId != null) widget.relatedGoalId!,
+    };
     final habit = widget.habit;
     _name = TextEditingController(text: habit?.name ?? '');
     _description = TextEditingController(text: habit?.description ?? '');
@@ -127,7 +144,9 @@ class _HabitFormPageState extends State<HabitFormPage> {
       _reminders = List.of(habit.reminders);
       _kind = habit.kind;
       _quantKind = habit.quantKind;
-      _quantTarget = habit.kind == HabitKind.quantitative ? habit.perDayTarget : 8;
+      _quantTarget = habit.kind == HabitKind.quantitative
+          ? habit.perDayTarget
+          : 8;
       _quantIncrement = habit.incrementAmount;
       _bookCover = habit.bookCoverPath;
       _focusOnly = habit.focusOnly;
@@ -180,82 +199,129 @@ class _HabitFormPageState extends State<HabitFormPage> {
   }
 
   Future<void> _submit() async {
-    final controller = context.read<HabitsController>();
-    final name = _name.text.trim();
-    final description = _description.text.trim();
-    final quantitative = _kind == HabitKind.quantitative;
-    final negative = _kind == HabitKind.negative;
-    final dailyCost = negative
-        ? double.tryParse(_dailyCost.text.trim().replaceAll(',', '.')) ?? 0
-        : 0.0;
-    final interval = negative ? HabitInterval.daily : _interval;
-    final frequency = negative ? 1 : _frequency;
-    final focusOnly = _kind == HabitKind.positive && _focusOnly;
-    final substeps = _kind == HabitKind.positive && !focusOnly
-        ? _substeps.where((s) => s.title.trim().isNotEmpty).toList()
-        : <Substep>[];
+    if (_saving || !_canSave) return;
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    var linksPending = false;
+    final goals = context.read<GoalsController>();
+    final selectedGoals = {..._relatedGoalIds};
+    await runGoalAction(
+      context,
+      () async {
+        final controller = context.read<HabitsController>();
+        final existing = controller.byId(_habitId);
+        final name = _name.text.trim();
+        final description = _description.text.trim();
+        final quantitative = _kind == HabitKind.quantitative;
+        final negative = _kind == HabitKind.negative;
+        final dailyCost = negative
+            ? double.tryParse(_dailyCost.text.trim().replaceAll(',', '.')) ?? 0
+            : 0.0;
+        final interval = negative ? HabitInterval.daily : _interval;
+        final frequency = negative ? 1 : _frequency;
+        final focusOnly = _kind == HabitKind.positive && _focusOnly;
+        final substeps = _kind == HabitKind.positive && !focusOnly
+            ? _substeps.where((s) => s.title.trim().isNotEmpty).toList()
+            : <Substep>[];
 
-    if (widget.isEditing) {
-      await controller.update(
-        widget.habit!.copyWith(
-          name: name,
-          icon: _icon,
-          category: _category,
-          description: description,
-          color: _color,
-          interval: interval,
-          targetFrequency: frequency,
-          scheduleWeekdays: negative ? const [] : _scheduleWeekdays,
-          scheduleEvery: negative ? 2 : _scheduleEvery,
-          reminders: _reminders,
-          coverPath: _cover,
-          dailyCost: dailyCost,
-          perDayTarget: quantitative ? _quantTarget : widget.habit!.perDayTarget,
-          unitLabel: quantitative ? _quantUnit : widget.habit!.unitLabel,
-          incrementAmount:
-              quantitative ? _quantIncrement : widget.habit!.incrementAmount,
-          quantKind: quantitative ? _quantKind : widget.habit!.quantKind,
-          bookCoverPath: quantitative ? _bookCover : widget.habit!.bookCoverPath,
-          focusOnly: focusOnly,
-          tracking: _tracking,
-          focusMinutes: _focusMinutes,
-          focusBreakMinutes: _pomodoro ? _breakMinutes : 0,
-          startMinute: negative ? -1 : _startMinute,
-          durationMinutes: negative ? 0 : _durationMinutes,
-          substeps: substeps,
-        ),
-      );
-    } else {
-      await controller.create(
-        name: name,
-        icon: _icon,
-        category: _category,
-        description: description,
-        color: _color.toARGB32(),
-        interval: interval,
-        targetFrequency: frequency,
-        scheduleWeekdays: negative ? const [] : _scheduleWeekdays,
-        scheduleEvery: negative ? 2 : _scheduleEvery,
-        reminders: _reminders,
-        coverPath: _cover,
-        kind: _kind,
-        dailyCost: dailyCost,
-        perDayTarget: quantitative ? _quantTarget : 1,
-        unitLabel: quantitative ? _quantUnit : '',
-        incrementAmount: quantitative ? _quantIncrement : 1,
-        quantKind: quantitative ? _quantKind : QuantKind.generic,
-        bookCoverPath: quantitative ? _bookCover : '',
-        focusOnly: focusOnly,
-        tracking: _tracking,
-        focusMinutes: _focusMinutes,
-        focusBreakMinutes: _pomodoro ? _breakMinutes : 0,
-        startMinute: negative ? -1 : _startMinute,
-        durationMinutes: negative ? 0 : _durationMinutes,
-        substeps: substeps,
-      );
-    }
-    AppNavigator.pop();
+        if (existing != null) {
+          await controller.update(
+            existing.copyWith(
+              name: name,
+              icon: _icon,
+              category: _category,
+              description: description,
+              color: _color,
+              interval: interval,
+              targetFrequency: frequency,
+              scheduleWeekdays: negative ? const [] : _scheduleWeekdays,
+              scheduleEvery: negative ? 2 : _scheduleEvery,
+              reminders: _reminders,
+              coverPath: _cover,
+              dailyCost: dailyCost,
+              perDayTarget: quantitative ? _quantTarget : existing.perDayTarget,
+              unitLabel: quantitative ? _quantUnit : existing.unitLabel,
+              incrementAmount: quantitative
+                  ? _quantIncrement
+                  : existing.incrementAmount,
+              quantKind: quantitative ? _quantKind : existing.quantKind,
+              bookCoverPath: quantitative ? _bookCover : existing.bookCoverPath,
+              focusOnly: focusOnly,
+              tracking: _tracking,
+              focusMinutes: _focusMinutes,
+              focusBreakMinutes: _pomodoro ? _breakMinutes : 0,
+              startMinute: negative ? -1 : _startMinute,
+              durationMinutes: negative ? 0 : _durationMinutes,
+              substeps: substeps,
+            ),
+          );
+        } else {
+          await controller.create(
+            id: _habitId,
+            name: name,
+            icon: _icon,
+            category: _category,
+            description: description,
+            color: _color.toARGB32(),
+            interval: interval,
+            targetFrequency: frequency,
+            scheduleWeekdays: negative ? const [] : _scheduleWeekdays,
+            scheduleEvery: negative ? 2 : _scheduleEvery,
+            reminders: _reminders,
+            coverPath: _cover,
+            kind: _kind,
+            dailyCost: dailyCost,
+            perDayTarget: quantitative ? _quantTarget : 1,
+            unitLabel: quantitative ? _quantUnit : '',
+            incrementAmount: quantitative ? _quantIncrement : 1,
+            quantKind: quantitative ? _quantKind : QuantKind.generic,
+            bookCoverPath: quantitative ? _bookCover : '',
+            focusOnly: focusOnly,
+            tracking: _tracking,
+            focusMinutes: _focusMinutes,
+            focusBreakMinutes: _pomodoro ? _breakMinutes : 0,
+            startMinute: negative ? -1 : _startMinute,
+            durationMinutes: negative ? 0 : _durationMinutes,
+            substeps: substeps,
+          );
+        }
+        linksPending = true;
+        await goals.setSupportingGoals(_habitId, selectedGoals);
+        if (mounted) AppNavigator.pop();
+      },
+      onError: (error) {
+        if (!mounted) return;
+        setState(() {
+          _saveError = linksPending
+              ? context.l10n.glink_partial_save
+              : goalErrorMessage(context, error);
+        });
+        AppSnackbar.error(context, _saveError!);
+      },
+    );
+    if (mounted) setState(() => _saving = false);
   }
+
+  Widget _goalSelection() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      if (_saveError != null)
+        Semantics(
+          liveRegion: true,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(_saveError!),
+          ),
+        ),
+      HabitGoalSelection(
+        habitId: _habitId,
+        selected: _relatedGoalIds,
+        onChanged: (value) => setState(() => _relatedGoalIds = value),
+      ),
+    ],
+  );
 
   Future<void> _pickCover() async {
     final dest = await CoverStorage.pick();
@@ -324,8 +390,8 @@ class _HabitFormPageState extends State<HabitFormPage> {
       child: style.isMinimalStyle
           ? _buildMinimal(context)
           : style.isExpressStyle
-              ? _buildExpress(context)
-              : _buildClassic(context),
+          ? _buildExpress(context)
+          : _buildClassic(context),
     );
   }
 
@@ -347,29 +413,33 @@ class _HabitFormPageState extends State<HabitFormPage> {
         leadingWidth: 68,
         leading: Padding(
           padding: const EdgeInsets.only(left: 16),
-          child: Center(child: ExpressIconButton(
-            icon: LucideIcons.x,
-            tooltip: context.l10n.cancel,
-            onPressed: () => AppNavigator.pop(),
-          )),
+          child: Center(
+            child: ExpressIconButton(
+              icon: LucideIcons.x,
+              tooltip: context.l10n.cancel,
+              onPressed: () => AppNavigator.pop(),
+            ),
+          ),
         ),
         actions: [
           if (widget.isEditing)
             Padding(
               padding: const EdgeInsets.only(right: 16),
-              child: Center(child: ExpressIconButton(
-                icon: LucideIcons.trash2,
-                tint: context.tokens.danger,
-                background: context.tokens.danger.withValues(alpha: 0.14),
-                onPressed: _confirmDelete,
-              )),
+              child: Center(
+                child: ExpressIconButton(
+                  icon: LucideIcons.trash2,
+                  tint: context.tokens.danger,
+                  background: context.tokens.danger.withValues(alpha: 0.14),
+                  onPressed: _confirmDelete,
+                ),
+              ),
             ),
         ],
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       floatingActionButton: ExpressSaveBar(
         label: context.l10n.save,
-        onPressed: _canSave ? _submit : null,
+        onPressed: _canSave && !_saving ? _submit : null,
       ),
       body: Center(
         child: ConstrainedBox(
@@ -385,8 +455,9 @@ class _HabitFormPageState extends State<HabitFormPage> {
   }
 
   List<Widget> _expressFields(BuildContext context) {
-    final title =
-        widget.isEditing ? context.l10n.edit_habit : context.l10n.new_habit;
+    final title = widget.isEditing
+        ? context.l10n.edit_habit
+        : context.l10n.new_habit;
 
     return [
       ExpressHeadline(title: title),
@@ -542,6 +613,8 @@ class _HabitFormPageState extends State<HabitFormPage> {
         ),
       ],
       const SizedBox(height: 26),
+      _goalSelection(),
+      const SizedBox(height: 26),
       SectionLabel(context.l10n.reminders),
       for (final reminder in _reminders)
         Padding(
@@ -579,7 +652,7 @@ class _HabitFormPageState extends State<HabitFormPage> {
               onPressed: _confirmDelete,
             ),
           TextButton(
-            onPressed: _canSave ? _submit : null,
+            onPressed: _canSave && !_saving ? _submit : null,
             child: Text(
               context.l10n.save,
               style: sheetActionStyle(context, size: 16),
@@ -846,6 +919,8 @@ class _HabitFormPageState extends State<HabitFormPage> {
         ),
       ],
       const SizedBox(height: 16),
+      _goalSelection(),
+      const SizedBox(height: 16),
       SectionLabel(context.l10n.reminders),
       for (final reminder in _reminders)
         Padding(
@@ -865,10 +940,10 @@ class _HabitFormPageState extends State<HabitFormPage> {
       : _unitLabel.text.trim();
 
   double get _quantStep => switch (_quantKind) {
-        QuantKind.water => 50,
-        QuantKind.time => 5,
-        _ => 1,
-      };
+    QuantKind.water => 50,
+    QuantKind.time => 5,
+    _ => 1,
+  };
 
   String _intervalLabel(BuildContext context, HabitInterval option) =>
       switch (option) {
@@ -880,215 +955,215 @@ class _HabitFormPageState extends State<HabitFormPage> {
       };
 
   Widget _buildClassic(BuildContext context) {
-    final title =
-        widget.isEditing ? context.l10n.edit_habit : context.l10n.new_habit;
+    final title = widget.isEditing
+        ? context.l10n.edit_habit
+        : context.l10n.new_habit;
     return Scaffold(
-        appBar: AppBar(
-          title: Text(title),
-          leading: IconButton(
-            icon: const Icon(LucideIcons.x),
-            onPressed: () => AppNavigator.pop(),
+      appBar: AppBar(
+        title: Text(title),
+        leading: IconButton(
+          icon: const Icon(LucideIcons.x),
+          onPressed: () => AppNavigator.pop(),
+        ),
+        actions: [
+          if (widget.isEditing)
+            IconButton(
+              icon: Icon(LucideIcons.trash2, color: context.tokens.danger),
+              onPressed: _confirmDelete,
+            ),
+          TextButton(
+            onPressed: _canSave && !_saving ? _submit : null,
+            child: Text(
+              context.l10n.save,
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+            ),
           ),
-          actions: [
-            if (widget.isEditing)
-              IconButton(
-                icon: Icon(LucideIcons.trash2, color: context.tokens.danger),
-                onPressed: _confirmDelete,
-              ),
-            TextButton(
-              onPressed: _canSave ? _submit : null,
-              child: Text(
-                context.l10n.save,
-                style:
-                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-              ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: ListView(
+        padding: context.pagePadding(16, 16, 16, 16),
+        children: [
+          HabitPreview(
+            icon: _icon,
+            color: _color,
+            name: _name.text.trim(),
+          ),
+          const SizedBox(height: 20),
+          SectionLabel(context.l10n.name),
+          AppTextField(
+            hint: context.l10n.name_hint,
+            controller: _name,
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 20),
+          SectionLabel(context.l10n.description),
+          AppTextField(
+            hint: context.l10n.description_hint,
+            controller: _description,
+          ),
+          const SizedBox(height: 20),
+          SectionLabel(context.l10n.habit_kind),
+          KindSelector(
+            kind: _kind,
+            locked: _kindLocked,
+            onChanged: (kind) => setState(() => _kind = kind),
+          ),
+          if (_kind == HabitKind.quantitative) ...[
+            const SizedBox(height: 12),
+            QuantitativeFields(
+              quantKind: _quantKind,
+              unitController: _unitLabel,
+              target: _quantTarget,
+              increment: _quantIncrement,
+              onPresetSelected: _applyQuantPreset,
+              onUnitChanged: () => setState(() {}),
+              onTargetChanged: (v) => setState(() => _quantTarget = v),
+              onIncrementChanged: (v) => setState(() => _quantIncrement = v),
             ),
-            const SizedBox(width: 8),
+            if (_quantKind == QuantKind.reading) ...[
+              const SizedBox(height: 20),
+              SectionLabel(context.l10n.book_cover),
+              CoverPicker(
+                path: _bookCover,
+                color: _color,
+                onPick: _pickBookCover,
+                onRemove: () => setState(() => _bookCover = ''),
+              ),
+            ],
           ],
-        ),
-        body: ListView(
-          padding: context.pagePadding(16, 16, 16, 16),
-          children: [
-            HabitPreview(
-              icon: _icon,
-              color: _color,
-              name: _name.text.trim(),
-            ),
-            const SizedBox(height: 20),
-            SectionLabel(context.l10n.name),
-            AppTextField(
-              hint: context.l10n.name_hint,
-              controller: _name,
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 20),
-            SectionLabel(context.l10n.description),
-            AppTextField(
-              hint: context.l10n.description_hint,
-              controller: _description,
-            ),
-            const SizedBox(height: 20),
-            SectionLabel(context.l10n.habit_kind),
-            KindSelector(
-              kind: _kind,
-              locked: _kindLocked,
-              onChanged: (kind) => setState(() => _kind = kind),
-            ),
-            if (_kind == HabitKind.quantitative) ...[
-              const SizedBox(height: 12),
-              QuantitativeFields(
-                quantKind: _quantKind,
-                unitController: _unitLabel,
-                target: _quantTarget,
-                increment: _quantIncrement,
-                onPresetSelected: _applyQuantPreset,
-                onUnitChanged: () => setState(() {}),
-                onTargetChanged: (v) => setState(() => _quantTarget = v),
-                onIncrementChanged: (v) => setState(() => _quantIncrement = v),
-              ),
-              if (_quantKind == QuantKind.reading) ...[
-                const SizedBox(height: 20),
-                SectionLabel(context.l10n.book_cover),
-                CoverPicker(
-                  path: _bookCover,
-                  color: _color,
-                  onPick: _pickBookCover,
-                  onRemove: () => setState(() => _bookCover = ''),
-                ),
-              ],
-            ],
-            if (_kind == HabitKind.negative) ...[
-              const SizedBox(height: 12),
-              NegativeHint(color: _color),
-              const SizedBox(height: 12),
-              CostField(controller: _dailyCost, color: _color),
-            ],
-            if (_kind == HabitKind.positive) ...[
-              const SizedBox(height: 20),
-              FocusOnlyToggle(
-                value: _focusOnly,
-                color: _color,
-                onChanged: (v) => setState(() => _focusOnly = v),
-              ),
-              if (_focusOnly) ...[
-                const SizedBox(height: 20),
-                SectionLabel(context.l10n.focus_duration),
-                FocusDurationChips(
-                  minutes: _focusMinutes,
-                  onChanged: (v) => setState(() => _focusMinutes = v),
-                ),
-                if (_focusMinutes > 0) ...[
-                  const SizedBox(height: 12),
-                  FocusPomodoroCard(
-                    enabled: _pomodoro,
-                    breakMinutes: _breakMinutes,
-                    onToggle: (v) => setState(() => _pomodoro = v),
-                    onBreakChanged: (v) => setState(() => _breakMinutes = v),
-                  ),
-                ],
-              ],
-              if (!_focusOnly) ...[
-                const SizedBox(height: 20),
-                SectionLabel(context.l10n.checklist),
-                SubstepsEditor(
-                  substeps: _substeps,
-                  color: _color,
-                  onChanged: (list) => _substeps = list,
-                ),
-              ],
-            ],
-            if (_offersTracking) ...[
-              const SizedBox(height: 20),
-              TrackingToggle(
-                value: _tracking,
-                color: _color,
-                onChanged: (v) => setState(() => _tracking = v),
-              ),
-            ],
-            const SizedBox(height: 20),
-            SectionLabel(context.l10n.icon),
-            IconPicker(
-              selected: _icon,
-              color: _color,
-              onSelected: (icon) => setState(() => _icon = icon),
-            ),
-            const SizedBox(height: 20),
-            SectionLabel(context.l10n.color),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: ColorPicker(
-                  selected: _color,
-                  onSelected: (c) => setState(() => _color = c),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            SectionLabel(context.l10n.cover_image),
-            CoverPicker(
-              path: _cover,
-              color: _color,
-              onPick: _pickCover,
-              onRemove: () => setState(() => _cover = ''),
-            ),
-            const SizedBox(height: 20),
-            SectionLabel(context.l10n.category),
-            CategoryPicker(
-              selected: _category,
-              onSelected: (c) => setState(() => _category = c),
-            ),
-            if (_kind != HabitKind.negative) ...[
-              const SizedBox(height: 20),
-              SectionLabel(context.l10n.frequency),
-              IntervalSelector(
-                interval: _interval,
-                frequency: _frequency,
-                weekdays: _scheduleWeekdays,
-                every: _scheduleEvery,
-                onIntervalChanged: (interval) => setState(() {
-                  _interval = interval;
-                  _frequency = switch (interval) {
-                    HabitInterval.weekly => 3,
-                    HabitInterval.monthly => 10,
-                    _ => 1,
-                  };
-                }),
-                onFrequencyChanged: (value) =>
-                    setState(() => _frequency = value),
-                onWeekdaysChanged: (days) =>
-                    setState(() => _scheduleWeekdays = days),
-                onEveryChanged: (v) => setState(() => _scheduleEvery = v),
-              ),
-            ],
-            if (_kind != HabitKind.negative && _planning) ...[
-              const SizedBox(height: 20),
-              SectionLabel(context.l10n.habit_time),
-              HabitTimeFields(
-                startMinute: _startMinute,
-                durationMinutes: _durationMinutes,
-                color: _color,
-                onChanged: (start, duration) => setState(() {
-                  _startMinute = start;
-                  _durationMinutes = duration;
-                }),
-              ),
-            ],
-            const SizedBox(height: 20),
-            SectionLabel(context.l10n.reminders),
-            for (final reminder in _reminders)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: ReminderTile(
-                  reminder: reminder,
-                  onEdit: () => _editReminder(reminder),
-                  onDelete: () =>
-                      setState(() => _reminders.remove(reminder)),
-                ),
-              ),
-            AddReminderButton(onTap: _addReminder),
-            const SizedBox(height: 24),
+          if (_kind == HabitKind.negative) ...[
+            const SizedBox(height: 12),
+            NegativeHint(color: _color),
+            const SizedBox(height: 12),
+            CostField(controller: _dailyCost, color: _color),
           ],
-        ),
+          if (_kind == HabitKind.positive) ...[
+            const SizedBox(height: 20),
+            FocusOnlyToggle(
+              value: _focusOnly,
+              color: _color,
+              onChanged: (v) => setState(() => _focusOnly = v),
+            ),
+            if (_focusOnly) ...[
+              const SizedBox(height: 20),
+              SectionLabel(context.l10n.focus_duration),
+              FocusDurationChips(
+                minutes: _focusMinutes,
+                onChanged: (v) => setState(() => _focusMinutes = v),
+              ),
+              if (_focusMinutes > 0) ...[
+                const SizedBox(height: 12),
+                FocusPomodoroCard(
+                  enabled: _pomodoro,
+                  breakMinutes: _breakMinutes,
+                  onToggle: (v) => setState(() => _pomodoro = v),
+                  onBreakChanged: (v) => setState(() => _breakMinutes = v),
+                ),
+              ],
+            ],
+            if (!_focusOnly) ...[
+              const SizedBox(height: 20),
+              SectionLabel(context.l10n.checklist),
+              SubstepsEditor(
+                substeps: _substeps,
+                color: _color,
+                onChanged: (list) => _substeps = list,
+              ),
+            ],
+          ],
+          if (_offersTracking) ...[
+            const SizedBox(height: 20),
+            TrackingToggle(
+              value: _tracking,
+              color: _color,
+              onChanged: (v) => setState(() => _tracking = v),
+            ),
+          ],
+          const SizedBox(height: 20),
+          SectionLabel(context.l10n.icon),
+          IconPicker(
+            selected: _icon,
+            color: _color,
+            onSelected: (icon) => setState(() => _icon = icon),
+          ),
+          const SizedBox(height: 20),
+          SectionLabel(context.l10n.color),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: ColorPicker(
+                selected: _color,
+                onSelected: (c) => setState(() => _color = c),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          SectionLabel(context.l10n.cover_image),
+          CoverPicker(
+            path: _cover,
+            color: _color,
+            onPick: _pickCover,
+            onRemove: () => setState(() => _cover = ''),
+          ),
+          const SizedBox(height: 20),
+          SectionLabel(context.l10n.category),
+          CategoryPicker(
+            selected: _category,
+            onSelected: (c) => setState(() => _category = c),
+          ),
+          if (_kind != HabitKind.negative) ...[
+            const SizedBox(height: 20),
+            SectionLabel(context.l10n.frequency),
+            IntervalSelector(
+              interval: _interval,
+              frequency: _frequency,
+              weekdays: _scheduleWeekdays,
+              every: _scheduleEvery,
+              onIntervalChanged: (interval) => setState(() {
+                _interval = interval;
+                _frequency = switch (interval) {
+                  HabitInterval.weekly => 3,
+                  HabitInterval.monthly => 10,
+                  _ => 1,
+                };
+              }),
+              onFrequencyChanged: (value) => setState(() => _frequency = value),
+              onWeekdaysChanged: (days) =>
+                  setState(() => _scheduleWeekdays = days),
+              onEveryChanged: (v) => setState(() => _scheduleEvery = v),
+            ),
+          ],
+          if (_kind != HabitKind.negative && _planning) ...[
+            const SizedBox(height: 20),
+            SectionLabel(context.l10n.habit_time),
+            HabitTimeFields(
+              startMinute: _startMinute,
+              durationMinutes: _durationMinutes,
+              color: _color,
+              onChanged: (start, duration) => setState(() {
+                _startMinute = start;
+                _durationMinutes = duration;
+              }),
+            ),
+          ],
+          const SizedBox(height: 20),
+          _goalSelection(),
+          const SizedBox(height: 20),
+          SectionLabel(context.l10n.reminders),
+          for (final reminder in _reminders)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ReminderTile(
+                reminder: reminder,
+                onEdit: () => _editReminder(reminder),
+                onDelete: () => setState(() => _reminders.remove(reminder)),
+              ),
+            ),
+          AddReminderButton(onTap: _addReminder),
+          const SizedBox(height: 24),
+        ],
+      ),
     );
   }
 }

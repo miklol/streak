@@ -6,6 +6,8 @@ import 'package:streak/core/extensions/date_extensions.dart';
 import 'package:streak/core/utils/cover_storage.dart';
 import 'package:streak/features/todos/data/todo.dart';
 import 'package:streak/features/todos/data/todo_groups.dart';
+import 'package:streak/features/work/data/todo_move_exception.dart';
+import 'package:streak/features/work/data/work_task.dart';
 import 'package:streak/services/notification_service.dart';
 import 'package:streak/services/todos_widget_service.dart';
 import 'package:uuid/uuid.dart';
@@ -69,12 +71,18 @@ class TodosController extends ChangeNotifier {
   Future<void> update(Todo todo) async {
     final index = _todos.indexWhere((t) => t.id == todo.id);
     if (index == -1) return;
-    final dropped =
-        _todos[index].photos.where((p) => !todo.photos.contains(p)).toList();
+    final dropped = _todos[index].photos
+        .where((p) => !todo.photos.contains(p))
+        .toList();
     _todos[index] = todo;
     notifyListeners();
     TodosWidgetService.syncSoon(_todos);
-    await LocalStore.writeTodo(todo);
+    try {
+      await LocalStore.writeTodo(todo, requireExisting: true);
+    } on TodoMoveException {
+      reload();
+      rethrow;
+    }
     await _notifications.scheduleTodo(todo);
     await CoverStorage.forgetAll(dropped);
   }
@@ -91,7 +99,12 @@ class TodosController extends ChangeNotifier {
     _todos[index] = updated;
     notifyListeners();
     TodosWidgetService.syncSoon(_todos);
-    await LocalStore.writeTodo(updated);
+    try {
+      await LocalStore.writeTodo(updated, requireExisting: true);
+    } on TodoMoveException {
+      reload();
+      rethrow;
+    }
     await _notifications.scheduleTodo(updated);
   }
 
@@ -116,5 +129,21 @@ class TodosController extends ChangeNotifier {
     TodosWidgetService.syncSoon(_todos);
     await LocalStore.removeTodos(done.map((t) => t.id));
     await CoverStorage.forgetAll(photos);
+  }
+
+  Future<WorkTask> moveToWork(
+    String id, {
+    String? areaId,
+    String? projectId,
+  }) async {
+    final task = await LocalStore.moveTodoToWork(
+      id,
+      areaId: areaId,
+      projectId: projectId,
+    );
+    reload();
+    await _notifications.cancelTodo(id);
+    await TodosWidgetService.sync(_todos);
+    return task;
   }
 }

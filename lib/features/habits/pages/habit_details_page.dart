@@ -29,6 +29,7 @@ import 'package:streak/features/habits/pages/journey_page.dart';
 import 'package:streak/features/habits/pages/quant_stats_page.dart';
 import 'package:streak/features/habits/state/habits_controller.dart';
 import 'package:streak/features/habits/state/notes_controller.dart';
+import 'package:streak/features/goals/widgets/related_goals_section.dart';
 import 'package:streak/features/habits/widgets/activity_calendar.dart';
 import 'package:streak/features/habits/widgets/day_actions_sheet.dart';
 import 'package:streak/core/minimal/minimal_kit.dart';
@@ -310,6 +311,8 @@ class _HabitDetailsPageState extends State<HabitDetailsPage> {
                 if (notesOn) _JourneyStrip(habit: habit),
                 const SizedBox(height: 20),
                 CheckHistoryTile(habit: habit),
+                const SizedBox(height: 16),
+                RelatedGoalsSection(habitId: habit.id),
                 const SizedBox(height: 12),
                 if (minimal)
                   MinimalVacationRow(habit: habit)

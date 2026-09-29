@@ -512,6 +512,15 @@ class _PreferencesPage extends StatelessWidget {
               ),
             ),
             SoftRow(
+              icon: LucideIcons.briefcase,
+              title: context.l10n.work,
+              subtitle: context.l10n.work_enable_sub,
+              trailing: _SoftSwitch(
+                value: settings.workEnabled,
+                onChanged: settings.setWorkEnabled,
+              ),
+            ),
+            SoftRow(
               icon: LucideIcons.palmtree,
               title: context.l10n.gamification_beta,
               subtitle: context.l10n.island_enable_sub,

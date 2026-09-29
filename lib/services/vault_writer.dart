@@ -4,10 +4,14 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:streak/core/extensions/date_extensions.dart';
 import 'package:streak/core/utils/amount_format.dart';
 import 'package:streak/features/focus/data/focus_session.dart';
+import 'package:streak/features/focus/data/focus_target.dart';
 import 'package:streak/features/habits/data/category.dart';
 import 'package:streak/features/habits/data/habit.dart';
 import 'package:streak/features/habits/data/habit_note.dart';
 import 'package:streak/features/todos/data/todo.dart';
+import 'package:streak/features/goals/data/goal.dart';
+import 'package:streak/features/work/data/work_data.dart';
+import 'package:streak/features/work/data/work_entry.dart';
 
 const vaultFolder = 'Streak';
 
@@ -33,7 +37,9 @@ class VaultWriter {
     required List<HabitNote> notes,
     required List<Todo> todos,
     required List<FocusSession> focus,
+    WorkData? work,
   }) async {
+    final workData = work ?? WorkData();
     final names = <String, String>{};
     for (final habit in habits) {
       names[habit.id] = habit.name;
@@ -48,7 +54,17 @@ class VaultWriter {
     final archived = habits.where((h) => h.isArchived).toList()
       ..sort((a, b) => a.name.compareTo(b.name));
 
-    await _writeText(root, 'README.md', _readme(habits, todos, notes, focus));
+    final workFile = await _writeOwnedText(root, 'work', _work(workData));
+    final goalsFile = await _writeOwnedText(
+      root,
+      'goals',
+      _goals(workData, names),
+    );
+    await _writeText(
+      root,
+      'README.md',
+      _readme(habits, todos, notes, focus, workData, workFile, goalsFile),
+    );
     await _writeHabits(Directory('${root.path}/habits'), live, labels);
     await _writeHabits(
       Directory('${root.path}/habits/archived'),
@@ -58,6 +74,150 @@ class VaultWriter {
     await _writeText(root, 'tasks.md', _tasks(todos));
     await _writeText(root, 'notes.md', _notes(notes, names));
     await _writeText(root, 'focus.md', _focus(focus, names));
+  }
+
+  static Future<String> _writeOwnedText(
+    Directory root,
+    String stem,
+    String content,
+  ) async {
+    var name = '$stem.md';
+    var suffix = 1;
+    while (File('${root.path}/$name').existsSync()) {
+      final file = File('${root.path}/$name');
+      if (file.readAsStringSync().startsWith('---\n$marker\n---\n')) break;
+      name = '$stem (Streak${suffix == 1 ? "" : " $suffix"}).md';
+      suffix++;
+    }
+    await _writeText(root, name, content);
+    return name;
+  }
+
+  static String _work(WorkData data) {
+    final out = StringBuffer('---\n$marker\n---\n\n# Work\n');
+    for (final area in data.areas) {
+      out.writeln('\n## ${area.name}\n');
+      out.writeln('ID: ${area.id} | ${area.type.name}');
+      out.writeln('Archived: ${area.isArchived} | Deleted: ${area.isDeleted}');
+      out.writeln('\n${area.description}');
+    }
+    out.writeln('\n## Projects');
+    for (final project in data.projects) {
+      out.writeln('\n### ${project.name}\n');
+      out.writeln(
+        'ID: ${project.id} | Area: ${project.areaId ?? "Unassigned"}',
+      );
+      out.writeln(
+        'Status: ${project.status.name} | Due: ${project.dueDate ?? "-"}',
+      );
+      out.writeln(
+        'Archived: ${project.isArchived} | Deleted: ${project.isDeleted}',
+      );
+      out.writeln('\n${project.description}\n\n${project.outcome}');
+    }
+    out.writeln('\n## Tasks');
+    for (final task in data.tasks) {
+      out.writeln('\n### ${task.title}\n');
+      out.writeln('ID: ${task.id} | Project: ${task.projectId ?? "Inbox"}');
+      out.writeln(
+        'Parent: ${task.parentTaskId ?? "-"} | Status: ${task.status.name}',
+      );
+      out.writeln('Archived: ${task.isArchived} | Deleted: ${task.isDeleted}');
+      out.writeln(
+        'Due: ${task.dueDate ?? "-"} | Estimate: ${task.estimatedMinutes ?? 0} min',
+      );
+      out.writeln('\n${task.description}\n\n${task.completionCriteria}');
+    }
+    out.writeln('\n## Notes and activity');
+    for (final entry in data.entries) {
+      out.writeln(
+        '\n### ${entry.date}: ${entry.entityKind.name}:${entry.entityId}',
+      );
+      out.writeln('\n${entry.text}');
+      out.writeln('Kind: ${entry.kind.name} | Deleted: ${entry.isDeleted}');
+      if (entry.value != null) {
+        out.writeln(
+          'Progress: ${entry.previousValue ?? "-"} -> ${entry.value}',
+        );
+      }
+      if (entry.status != null) {
+        out.writeln(
+          'Status: ${entry.previousStatus ?? "-"} -> ${entry.status}',
+        );
+      }
+      for (final photo in entry.photos) {
+        out.writeln('Photo: $photo');
+      }
+    }
+    out.writeln('\n## Planned work');
+    for (final block in data.blocks) {
+      out.writeln(
+        '- ${block.startsAt.toIso8601String()} | ${block.minutes} min '
+        '| Task: ${block.taskId} | ${block.note}',
+      );
+    }
+    return out.toString();
+  }
+
+  static String _goals(WorkData data, Map<String, String> habitNames) {
+    final out = StringBuffer('---\n$marker\n---\n\n# Goals\n');
+    for (final goal in data.goals) {
+      out.writeln('\n## ${goal.title}\n');
+      out.writeln('ID: ${goal.id} | Scope: ${goal.scope.name}');
+      out.writeln('Status: ${goal.status.name} | Source: ${goal.source.name}');
+      out.writeln('Archived: ${goal.isArchived} | Deleted: ${goal.isDeleted}');
+      if (goal.source == GoalSource.manual) {
+        out.writeln('Recorded value: ${goal.current}');
+      }
+      out.writeln(
+        'Target: ${goal.target} | Unit: ${goal.unit} ${goal.currency}',
+      );
+      out.writeln('Dates: ${goal.startDate ?? "-"} -> ${goal.endDate ?? "-"}');
+      out.writeln('\n${goal.description}\n\n${goal.why}');
+      for (final link in data.habitLinks.where(
+        (link) => link.goalId == goal.id,
+      )) {
+        out.writeln(
+          '- ${habitNames[link.habitId] ?? link.habitId}: '
+          '${link.role.name}, ${link.metric.name} '
+          '(${link.startDate ?? "-"} -> ${link.endDate ?? "-"}) '
+          '| Deleted: ${link.isDeleted}',
+        );
+      }
+      final entries =
+          data.entries
+              .where(
+                (entry) =>
+                    entry.entityKind == WorkEntityKind.goal &&
+                    entry.entityId == goal.id,
+              )
+              .toList()
+            ..sort((a, b) => b.meta.createdAt.compareTo(a.meta.createdAt));
+      if (entries.isNotEmpty) out.writeln('\n### Updates\n');
+      for (final entry in entries) {
+        out.writeln(
+          '${entry.date} | ${entry.kind.name} | Deleted: ${entry.isDeleted}',
+        );
+        if (entry.value != null) {
+          out.writeln(
+            '${entry.previousValue ?? "-"} -> ${entry.value} ${entry.measurementUnit}',
+          );
+        }
+        if (entry.measurementTarget != null) {
+          out.writeln(
+            'Target at update: ${entry.measurementTarget} '
+            '| Baseline: ${entry.measurementBaseline} '
+            '| Unit at update: ${entry.measurementUnit}',
+          );
+        }
+        if (entry.status != null) {
+          out.writeln('${entry.previousStatus ?? "-"} -> ${entry.status}');
+        }
+        if (entry.text.isNotEmpty) out.writeln(entry.text);
+        out.writeln();
+      }
+    }
+    return out.toString();
   }
 
   static Future<void> _writeHabits(
@@ -113,13 +273,16 @@ class VaultWriter {
     List<Todo> todos,
     List<HabitNote> notes,
     List<FocusSession> focus,
+    WorkData work,
+    String workFile,
+    String goalsFile,
   ) {
     final live = habits.where((h) => !h.isArchived).length;
     final archived = habits.length - live;
     return '''
 # Streak
 
-Everything Streak knows about your habits, written as plain files you can read
+Your habits, work, and goals, written as plain files you can read
 with any editor, or open as a vault in a notes app. Nothing here is encrypted or
 packed: it is yours.
 
@@ -132,6 +295,10 @@ Written on ${_stamp(DateTime.now())}.
 | Tasks | ${todos.length} |
 | Notes | ${notes.length} |
 | Focus sessions | ${focus.length} |
+| Work areas | ${work.areas.length} |
+| Work projects | ${work.projects.length} |
+| Work tasks | ${work.tasks.length} |
+| Goals | ${work.goals.length} |
 
 ## What is in here
 
@@ -140,6 +307,8 @@ Written on ${_stamp(DateTime.now())}.
 - `tasks.md` your to-do list.
 - `notes.md` the notes you wrote on habit days.
 - `focus.md` every focus session, newest first.
+- `$workFile` work areas, projects, tasks, notes, and planned work.
+- `$goalsFile` personal/work goals and their habit connections.
 
 Streak rewrites this folder on every automatic backup, so anything you add here
 under a name of its own is left alone, but edits to these files are overwritten.
@@ -202,8 +371,8 @@ the markdown here does not change anything in the app.
         final days = reminder.days.isEmpty
             ? 'every day'
             : (reminder.days.toList()..sort())
-                .map((d) => _weekdays[d - 1])
-                .join(', ');
+                  .map((d) => _weekdays[d - 1])
+                  .join(', ');
         out.writeln('- $at on $days');
       }
     }
@@ -235,8 +404,8 @@ the markdown here does not change anything in the app.
     final column = negative
         ? 'Relapse'
         : habit.kind == HabitKind.quantitative
-            ? 'Amount'
-            : 'Done';
+        ? 'Amount'
+        : 'Done';
 
     final out = StringBuffer()
       ..writeln('| Date | Day | $column |')
@@ -247,8 +416,8 @@ the markdown here does not change anything in the app.
       final value = negative
           ? 'yes'
           : habit.kind == HabitKind.quantitative
-              ? _amount(habit, entry.count)
-              : 'yes';
+          ? _amount(habit, entry.count)
+          : 'yes';
       out.writeln(
         '| ${_day(date)} | ${_weekdays[date.weekday - 1]} | $value |',
       );
@@ -323,37 +492,50 @@ the markdown here does not change anything in the app.
         '${sorted.length} sessions, ${formatMinutes(total / 60)} in total.',
       )
       ..writeln()
-      ..writeln('| Date | Habit | Length | Finished |')
-      ..writeln('| --- | --- | --- | --- |');
+      ..writeln('| Date | Target | Length | Finished | Source | Note |')
+      ..writeln('| --- | --- | --- | --- | --- | --- |');
 
     for (final session in sorted) {
-      final habit = habits[session.habitId] ?? '';
+      final target = session.target;
+      final title = target.kind == FocusTargetKind.workTask
+          ? [
+              target.areaTitle,
+              target.projectTitle,
+              target.title,
+            ].where((value) => value.isNotEmpty).join(' / ')
+          : (habits[session.habitId] ?? target.title);
       out.writeln(
-        '| ${_stamp(session.startedAt)} | $habit '
+        '| ${_stamp(session.startedAt.toLocal())} | ${_tableCell(title)} '
         '| ${formatMinutes(session.seconds / 60)} '
-        '| ${session.completed ? 'yes' : 'no'} |',
+        '| ${session.completed ? 'yes' : 'no'} '
+        '| ${session.source == FocusEntrySource.manual ? 'manual' : 'timer'} '
+        '| ${_tableCell(session.note)} |',
       );
     }
     return out.toString();
   }
 
+  static String _tableCell(String value) =>
+      value.replaceAll('|', r'\|').replaceAll(RegExp(r'[\r\n]+'), ' ');
+
   static String _type(Habit habit) => switch (habit.kind) {
-        HabitKind.positive => habit.substeps.isEmpty ? 'habit' : 'checklist',
-        HabitKind.negative => 'avoid',
-        HabitKind.quantitative => 'amount',
-      };
+    HabitKind.positive => habit.substeps.isEmpty ? 'habit' : 'checklist',
+    HabitKind.negative => 'avoid',
+    HabitKind.quantitative => 'amount',
+  };
 
   static String _schedule(Habit habit) => switch (habit.interval) {
-        HabitInterval.daily => 'every day',
-        HabitInterval.weekly => '${habit.targetFrequency} times per week',
-        HabitInterval.monthly => '${habit.targetFrequency} times per month',
-        HabitInterval.weekdays => habit.scheduleWeekdays.isEmpty
-            ? 'every day'
-            : (habit.scheduleWeekdays.toList()..sort())
+    HabitInterval.daily => 'every day',
+    HabitInterval.weekly => '${habit.targetFrequency} times per week',
+    HabitInterval.monthly => '${habit.targetFrequency} times per month',
+    HabitInterval.weekdays =>
+      habit.scheduleWeekdays.isEmpty
+          ? 'every day'
+          : (habit.scheduleWeekdays.toList()..sort())
                 .map((d) => _weekdays[d - 1])
                 .join(', '),
-        HabitInterval.everyXDays => 'every ${habit.scheduleEvery} days',
-      };
+    HabitInterval.everyXDays => 'every ${habit.scheduleEvery} days',
+  };
 
   static String _slug(String name) {
     var clean = name;

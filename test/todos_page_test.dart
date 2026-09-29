@@ -55,6 +55,7 @@ void main() {
 
     await tester.tap(find.bySemanticsLabel('Mark Buy a lamp as done'));
     await tester.pumpAndSettle();
+    await settleStoreWrites(tester);
 
     expect(find.text('Completed (2)'), findsOneWidget);
     expect(find.text('SOMEDAY'), findsNothing);
@@ -97,6 +98,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byIcon(LucideIcons.arrowUp));
     await tester.pumpAndSettle();
+    await settleStoreWrites(tester);
 
     expect(find.byType(TodoTile), findsOneWidget);
     expect(find.text('SOMEDAY'), findsOneWidget);

@@ -32,6 +32,10 @@ object FocusState {
         val seconds = (arguments["seconds"] as? Number)?.toInt() ?: 0
         val state = JSONObject()
         state.put("habitId", arguments["habitId"] as? String ?: "")
+        state.put("sessionId", arguments["sessionId"] as? String ?: "")
+        state.put("phaseId", arguments["phaseId"] as? String ?: "")
+        state.put("targetKind", arguments["targetKind"] as? String ?: "")
+        state.put("targetId", arguments["targetId"] as? String ?: "")
         state.put("title", arguments["title"] as? String ?: "")
         state.put("state", arguments["state"] as? String ?: "")
         state.put("channelName", arguments["channelName"] as? String ?: "")

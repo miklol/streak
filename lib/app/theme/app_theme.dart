@@ -45,7 +45,8 @@ class AppTheme {
           EdgeInsets.symmetric(horizontal: 24, vertical: 15),
         ),
         textStyle: WidgetStatePropertyAll(
-          ExpressType.headline.at(15, weight: 800, color: foreground),
+          ExpressType.headline.at(15, weight: 800, color: foreground)
+              .copyWith(inherit: false),
         ),
       );
 

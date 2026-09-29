@@ -1,11 +1,15 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart' show HiveError;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import 'package:streak/app/theme/app_tokens.dart';
 import 'package:streak/core/extensions/inset_extensions.dart';
 import 'package:streak/core/i18n/l10n.dart';
 import 'package:streak/core/routing/app_navigator.dart';
+import 'package:streak/core/utils/app_snackbar.dart';
 import 'package:streak/core/widgets/app_confirm_dialog.dart';
 import 'package:streak/core/widgets/app_empty_state.dart';
 import 'package:streak/core/widgets/app_text_field.dart';
@@ -23,6 +27,10 @@ import 'package:streak/features/todos/state/todos_controller.dart';
 import 'package:streak/features/todos/widgets/todo_composer.dart';
 import 'package:streak/features/todos/widgets/todo_labels.dart';
 import 'package:streak/features/todos/widgets/todo_tile.dart';
+import 'package:streak/features/work/data/todo_move_exception.dart';
+import 'package:streak/features/work/pages/work_task_page.dart';
+import 'package:streak/features/work/state/work_controller.dart';
+import 'package:streak/features/work/widgets/work_destination_sheet.dart';
 
 class TodosPage extends StatefulWidget {
   const TodosPage({super.key});
@@ -35,6 +43,72 @@ class _TodosPageState extends State<TodosPage> {
   bool _showCompleted = false;
   bool _searching = false;
   String _query = '';
+  final Set<String> _moving = {};
+  bool _choosingMove = false;
+
+  void _moveFailure(TodoMoveException error) {
+    if (!mounted) return;
+    context.read<TodosController>().reload();
+    context.read<WorkController>().reload();
+    final message = switch (error.code) {
+      TodoMoveFailure.alreadyMoved => context.l10n.work_todo_already_moved,
+      TodoMoveFailure.changedSource => context.l10n.work_move_changed,
+      _ => context.l10n.work_move_failed,
+    };
+    AppSnackbar.warning(context, message);
+  }
+
+  void _saveFailure(Object error) {
+    debugPrint('To-do action failed: $error');
+    if (!mounted) return;
+    context.read<TodosController>().reload();
+    context.read<WorkController>().reload();
+    AppSnackbar.error(context, context.l10n.work_action_failed);
+  }
+
+  Future<void> _toggle(Todo todo) async {
+    try {
+      await context.read<TodosController>().toggle(todo.id);
+    } on TodoMoveException catch (error) {
+      _moveFailure(error);
+    } on HiveError catch (error) {
+      _saveFailure(error);
+    } on FileSystemException catch (error) {
+      _saveFailure(error);
+    }
+  }
+
+  Future<void> _moveToWork(Todo todo) async {
+    if (_choosingMove || _moving.contains(todo.id)) return;
+    final todos = context.read<TodosController>();
+    final work = context.read<WorkController>();
+    _choosingMove = true;
+    try {
+      work.reload();
+      final destination = await showWorkDestinationPicker(context);
+      if (destination == null || !mounted) return;
+      setState(() => _moving.add(todo.id));
+      final moved = await todos.moveToWork(todo.id,
+          areaId: destination.areaId, projectId: destination.projectId);
+      if (!mounted) return;
+      work.reload();
+      AppSnackbar.success(context, context.l10n.work_todo_moved);
+      AppNavigator.push(WorkTaskPage(taskId: moved.id));
+    } on TodoMoveException catch (error) {
+      _moveFailure(error);
+    } on HiveError catch (error) {
+      _saveFailure(error);
+    } on FileSystemException catch (error) {
+      _saveFailure(error);
+    } on StateError catch (error) {
+      _saveFailure(error);
+    } on ArgumentError catch (error) {
+      _saveFailure(error);
+    } finally {
+      _choosingMove = false;
+      if (mounted) setState(() => _moving.remove(todo.id));
+    }
+  }
 
   void _toggleSearch() {
     setState(() {
@@ -179,8 +253,10 @@ class _TodosPageState extends State<TodosPage> {
                           overdue: section.group == TodoGroup.overdue,
                           corners:
                               _corners(express, index, section.todos.length),
-                          onToggle: () => todos.toggle(todo.id),
+                          onToggle: () => _toggle(todo),
                           onEdit: () => showTodoComposer(context, todo: todo),
+                          onMoveToWork: style.workEnabled ? () => _moveToWork(todo) : null,
+                          busy: _moving.contains(todo.id),
                         ),
                       ),
                     ),
@@ -203,8 +279,10 @@ class _TodosPageState extends State<TodosPage> {
                           todo: todo,
                           overdue: false,
                           corners: _corners(express, index, completed.length),
-                          onToggle: () => todos.toggle(todo.id),
+                          onToggle: () => _toggle(todo),
                           onEdit: () => showTodoComposer(context, todo: todo),
+                          onMoveToWork: style.workEnabled ? () => _moveToWork(todo) : null,
+                          busy: _moving.contains(todo.id),
                         ),
                       ),
                 ],

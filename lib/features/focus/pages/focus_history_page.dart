@@ -19,6 +19,8 @@ import 'package:streak/core/widgets/app_confirm_dialog.dart';
 import 'package:streak/core/widgets/app_empty_state.dart';
 import 'package:streak/core/widgets/entrance.dart';
 import 'package:streak/features/focus/data/focus_session.dart';
+import 'package:streak/features/focus/data/focus_stats.dart';
+import 'package:streak/features/focus/data/focus_target.dart';
 import 'package:streak/features/focus/state/focus_controller.dart';
 import 'package:streak/features/focus/widgets/focus_log_sheet.dart';
 import 'package:streak/features/habits/state/habits_controller.dart';
@@ -38,6 +40,7 @@ class FocusHistoryPage extends StatefulWidget {
 
 class _FocusHistoryPageState extends State<FocusHistoryPage> {
   final Set<String> _selected = {};
+  FocusStatsFilter _filter = FocusStatsFilter.all;
 
   bool get _selecting => _selected.isNotEmpty;
 
@@ -161,16 +164,22 @@ class _FocusHistoryPageState extends State<FocusHistoryPage> {
     final express = style.isExpressStyle;
     final minimal = style.isMinimalStyle;
     final habitId = widget.habitId;
-    final sessions = context
-        .watch<FocusController>()
-        .sessions
-        .where((s) => habitId == null || s.habitId == habitId)
-        .toList()
-      ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+    final sessions = context.watch<FocusController>().sessions.where((s) {
+      if (habitId != null) {
+        return s.target.kind == FocusTargetKind.habit && s.target.id == habitId;
+      }
+      return switch (_filter) {
+        FocusStatsFilter.all => true,
+        FocusStatsFilter.habits => s.target.kind == FocusTargetKind.habit,
+        FocusStatsFilter.work => s.target.kind == FocusTargetKind.workTask,
+      };
+    }).toList()..sort((a, b) => b.startedAt.compareTo(a.startedAt));
 
     final days = <String, List<FocusSession>>{};
     for (final session in sessions) {
-      days.putIfAbsent(session.startedAt.dayKey, () => []).add(session);
+      days
+          .putIfAbsent(session.startedAt.toLocal().dayKey, () => [])
+          .add(session);
     }
 
     return PopScope(
@@ -199,6 +208,33 @@ class _FocusHistoryPageState extends State<FocusHistoryPage> {
                       child: ExpressHeadline(title: _title(context)),
                     ),
                   if (minimal) MinimalTitle(title: _title(context)),
+                  if (habitId == null) ...[
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: SegmentedButton<FocusStatsFilter>(
+                        segments: [
+                          ButtonSegment(
+                            value: FocusStatsFilter.all,
+                            label: Text(context.l10n.all),
+                          ),
+                          ButtonSegment(
+                            value: FocusStatsFilter.habits,
+                            label: Text(context.l10n.your_habits),
+                          ),
+                          ButtonSegment(
+                            value: FocusStatsFilter.work,
+                            label: Text(context.l10n.work),
+                          ),
+                        ],
+                        selected: {_filter},
+                        onSelectionChanged: (selected) => setState(() {
+                          _filter = selected.single;
+                          _selected.clear();
+                        }),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   for (final (index, day) in days.entries.indexed)
                     Entrance(
                       index: index,
@@ -208,8 +244,10 @@ class _FocusHistoryPageState extends State<FocusHistoryPage> {
                           _DayHeader(
                             day: parseDayKey(day.key),
                             sessions: day.value.length,
-                            seconds:
-                                day.value.fold(0, (sum, s) => sum + s.seconds),
+                            seconds: day.value.fold(
+                              0,
+                              (sum, s) => sum + s.seconds,
+                            ),
                           ),
                           for (final session in day.value)
                             _SessionTile(
@@ -312,9 +350,10 @@ class _SessionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final habit = session.habitId.isEmpty
+    final target = session.target;
+    final habit = target.kind != FocusTargetKind.habit
         ? null
-        : context.watch<HabitsController>().byId(session.habitId);
+        : context.watch<HabitsController>().byId(target.id);
     final color = habit?.color ?? context.colors.primary;
     final locale = Localizations.localeOf(context).toString();
     final scheme = context.colors;
@@ -338,16 +377,16 @@ class _SessionTile extends StatelessWidget {
               color: selected
                   ? scheme.primary.withValues(alpha: 0.16)
                   : express
-                      ? expressSurface(context)
-                      : scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                  ? expressSurface(context)
+                  : scheme.surfaceContainerHighest.withValues(alpha: 0.6),
               borderRadius: BorderRadius.circular(
                 express ? (selected ? 26 : 22) : 16,
               ),
               border: selected
                   ? Border.all(color: scheme.primary, width: 1.5)
                   : express
-                      ? expressHairline(context)
-                      : Border.all(color: Colors.transparent, width: 1.5),
+                  ? expressHairline(context)
+                  : Border.all(color: Colors.transparent, width: 1.5),
             ),
             child: Row(
               children: [
@@ -360,41 +399,47 @@ class _SessionTile extends StatelessWidget {
                         : ExpressShape.squircle,
                     child: selected
                         ? Icon(LucideIcons.check, size: 19, color: color)
+                        : target.kind == FocusTargetKind.workTask
+                        ? Icon(LucideIcons.briefcase, size: 18, color: color)
                         : habit == null
-                            ? Icon(LucideIcons.timer, size: 18, color: color)
-                            : HabitGlyph(
-                                glyph: habit.icon,
-                                color: color,
-                                size: 18,
-                              ),
+                        ? Icon(LucideIcons.timer, size: 18, color: color)
+                        : HabitGlyph(
+                            glyph: habit.icon,
+                            color: color,
+                            size: 18,
+                          ),
                   )
                 else
                   Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: color.withValues(alpha: 0.14),
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: color.withValues(alpha: 0.14),
+                    ),
+                    child: Center(
+                      child: selected
+                          ? Icon(LucideIcons.check, size: 20, color: color)
+                          : target.kind == FocusTargetKind.workTask
+                          ? Icon(LucideIcons.briefcase, size: 18, color: color)
+                          : habit == null
+                          ? Icon(LucideIcons.timer, size: 18, color: color)
+                          : HabitGlyph(
+                              glyph: habit.icon,
+                              color: color,
+                              size: 18,
+                            ),
+                    ),
                   ),
-                  child: Center(
-                    child: selected
-                        ? Icon(LucideIcons.check, size: 20, color: color)
-                        : habit == null
-                            ? Icon(LucideIcons.timer, size: 18, color: color)
-                            : HabitGlyph(
-                                glyph: habit.icon,
-                                color: color,
-                                size: 18,
-                              ),
-                  ),
-                ),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        habit == null
+                        target.kind == FocusTargetKind.workTask
+                            ? target.title
+                            : habit == null
                             ? context.l10n.focus_free_session
                             : habit.name,
                         maxLines: 1,
@@ -413,9 +458,10 @@ class _SessionTile extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '${DateFormat.Hm(locale).format(session.startedAt)}'
+                        '${DateFormat.Hm(locale).format(session.startedAt.toLocal())}'
                         '  ·  '
-                        '${session.targetMinutes <= 0 ? context.l10n.focus_flowtime : context.l10n.minutes_short('${session.targetMinutes}')}',
+                        '${session.targetMinutes <= 0 ? context.l10n.focus_flowtime : context.l10n.minutes_short('${session.targetMinutes}')}'
+                        '${target.kind == FocusTargetKind.workTask ? '  ·  ${session.source == FocusEntrySource.manual ? context.l10n.work_time_manual : context.l10n.work_time_focused}' : ''}',
                         style: express
                             ? ExpressType.body.at(
                                 12,

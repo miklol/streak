@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:streak/core/express/express_motion.dart';
@@ -23,6 +25,7 @@ class Entrance extends StatefulWidget {
 
 class _EntranceState extends State<Entrance>
     with SingleTickerProviderStateMixin {
+  Timer? _start;
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 460),
@@ -40,19 +43,21 @@ class _EntranceState extends State<Entrance>
   void initState() {
     super.initState();
     final stagger = Duration(milliseconds: 55 * widget.index.clamp(0, 8));
-    Future.delayed(widget.delay + stagger, () {
+    _start = Timer(widget.delay + stagger, () {
       if (mounted) _controller.forward();
     });
   }
 
   @override
   void dispose() {
+    _start?.cancel();
     _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) return widget.child;
     final express = context.watch<SettingsController>().isExpressStyle;
     return AnimatedBuilder(
       animation: _controller,

@@ -1,4 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart' show HiveError;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import 'package:streak/app/theme/app_tokens.dart';
@@ -16,17 +20,24 @@ import 'package:streak/core/widgets/section_label.dart';
 import 'package:streak/features/focus/pages/focus_history_page.dart';
 import 'package:streak/features/focus/pages/focus_page.dart';
 import 'package:streak/features/focus/pages/focus_stats_page.dart';
+import 'package:streak/features/focus/data/focus_target.dart';
 import 'package:streak/features/focus/widgets/focus_duration_fields.dart';
 import 'package:streak/features/habits/state/habits_controller.dart';
 import 'package:streak/core/express/express_button.dart';
 import 'package:streak/features/settings/state/settings_controller.dart';
+import 'package:streak/features/focus/state/focus_controller.dart';
+import 'package:streak/features/work/data/work_task.dart';
+import 'package:streak/features/work/state/work_controller.dart';
+import 'package:streak/core/utils/app_snackbar.dart';
+import 'package:streak/features/focus/state/work_focus_actions.dart';
 
 const _entrance = Duration(milliseconds: 340);
 
 class FocusSetupPage extends StatefulWidget {
-  const FocusSetupPage({super.key, this.habitId});
+  const FocusSetupPage({super.key, this.habitId, this.workTaskId});
 
   final String? habitId;
+  final String? workTaskId;
 
   @override
   State<FocusSetupPage> createState() => _FocusSetupPageState();
@@ -42,7 +53,20 @@ class _FocusSetupPageState extends State<FocusSetupPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_restored || widget.habitId != null) return;
+    if (_restored) return;
+    final workTaskId = widget.workTaskId;
+    if (workTaskId != null) {
+      _restored = true;
+      final task = context.read<WorkController>().taskById(workTaskId);
+      if (task != null) {
+        _habitId = '';
+        _minutes = task.focusMinutes;
+        _pomodoro = task.breakMinutes > 0;
+        if (_pomodoro) _breakMinutes = task.breakMinutes;
+      }
+      return;
+    }
+    if (widget.habitId != null) return;
     _restored = true;
     final settings = context.read<SettingsController>();
     _minutes = settings.focusMinutes;
@@ -50,15 +74,71 @@ class _FocusSetupPageState extends State<FocusSetupPage> {
     if (_pomodoro) _breakMinutes = settings.focusBreakMinutes;
   }
 
-  void _start() {
-    context.read<SettingsController>().rememberFocusSetup(
-          _minutes,
-          _pomodoro ? _breakMinutes : 0,
-        );
+  Future<void> _start() async {
+    final focus = context.read<FocusController>();
+    if (focus.isActive) {
+      AppNavigator.pop();
+      AppNavigator.push(
+        const FocusPage(),
+        fade: true,
+        name: FocusPage.routeName,
+      );
+      return;
+    }
+    FocusTarget? target;
+    final workTaskId = widget.workTaskId;
+    if (workTaskId != null) {
+      try {
+        final work = context.read<WorkController>();
+        work.reload();
+        if (!workFocusTargetAvailable(context, workTaskId)) return;
+        final task = work.taskById(workTaskId);
+        if (task?.status == WorkTaskStatus.notStarted) {
+          await work.setTaskStatus(workTaskId, WorkTaskStatus.inProgress);
+        }
+        target = FocusTarget.fromWork(work.data, workTaskId);
+      } on WorkOperationException {
+        if (mounted) {
+          AppSnackbar.warning(context, context.l10n.work_action_failed);
+        }
+        return;
+      } on ArgumentError {
+        if (mounted) {
+          AppSnackbar.warning(context, context.l10n.work_action_failed);
+        }
+        return;
+      } on StateError {
+        if (mounted) {
+          AppSnackbar.warning(context, context.l10n.work_action_failed);
+        }
+        return;
+      } on FileSystemException {
+        if (mounted) {
+          AppSnackbar.warning(context, context.l10n.work_action_failed);
+        }
+        return;
+      } on HiveError {
+        if (mounted) {
+          AppSnackbar.warning(context, context.l10n.work_action_failed);
+        }
+        return;
+      } on PlatformException {
+        if (mounted) {
+          AppSnackbar.warning(context, context.l10n.work_action_failed);
+        }
+        return;
+      }
+    } else {
+      context.read<SettingsController>().rememberFocusSetup(
+        _minutes,
+        _pomodoro ? _breakMinutes : 0,
+      );
+    }
     AppNavigator.pop();
     AppNavigator.push(
       FocusPage(
         startHabitId: _habitId,
+        startTarget: target,
         startMinutes: _minutes,
         breakMinutes: _pomodoro ? _breakMinutes : 0,
       ),
@@ -70,6 +150,10 @@ class _FocusSetupPageState extends State<FocusSetupPage> {
   @override
   Widget build(BuildContext context) {
     final habits = context.watch<HabitsController>().habits;
+    final workTaskId = widget.workTaskId;
+    final workTask = workTaskId == null
+        ? null
+        : context.watch<WorkController>().taskById(workTaskId);
 
     final style = context.watch<SettingsController>();
     final express = style.isExpressStyle;
@@ -82,10 +166,12 @@ class _FocusSetupPageState extends State<FocusSetupPage> {
         leading: express
             ? Padding(
                 padding: const EdgeInsets.only(left: 16),
-                child: Center(child: ExpressIconButton(
-                  icon: LucideIcons.x,
-                  onPressed: () => AppNavigator.pop(),
-                )),
+                child: Center(
+                  child: ExpressIconButton(
+                    icon: LucideIcons.x,
+                    onPressed: () => AppNavigator.pop(),
+                  ),
+                ),
               )
             : IconButton(
                 icon: const Icon(LucideIcons.x),
@@ -98,8 +184,7 @@ class _FocusSetupPageState extends State<FocusSetupPage> {
                   child: ExpressIconButton(
                     icon: LucideIcons.chartColumn,
                     tooltip: context.l10n.focus_stats,
-                    onPressed: () =>
-                        AppNavigator.push(const FocusStatsPage()),
+                    onPressed: () => AppNavigator.push(const FocusStatsPage()),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -131,7 +216,12 @@ class _FocusSetupPageState extends State<FocusSetupPage> {
           children: [
             Expanded(
               child: ListView(
-                padding: EdgeInsets.fromLTRB(express ? 18 : 16, 8, express ? 18 : 16, 16),
+                padding: EdgeInsets.fromLTRB(
+                  express ? 18 : 16,
+                  8,
+                  express ? 18 : 16,
+                  16,
+                ),
                 children: [
                   if (express)
                     Entrance(
@@ -146,40 +236,58 @@ class _FocusSetupPageState extends State<FocusSetupPage> {
                       delay: _entrance,
                       child: MinimalTitle(title: context.l10n.focus),
                     ),
-                  Entrance(
-                    delay: _entrance,
-                    child: _Label(context.l10n.focus_pick_habit),
-                  ),
-                  Entrance(
-                    index: 1,
-                    delay: _entrance,
-                    child: _HabitOption(
-                      label: context.l10n.focus_free_session,
-                      icon: LucideIcons.timer,
-                      color: context.colors.primary,
-                      selected: _habitId.isEmpty,
-                      onTap: () => setState(() => _habitId = ''),
-                    ),
-                  ),
-                  for (var i = 0; i < habits.length; i++)
+                  if (workTask != null) ...[
                     Entrance(
-                      index: i + 2,
+                      delay: _entrance,
+                      child: _Label(context.l10n.work),
+                    ),
+                    Entrance(
+                      index: 1,
                       delay: _entrance,
                       child: _HabitOption(
-                        label: habits[i].name,
-                        glyph: habits[i].icon,
-                        color: habits[i].color,
-                        selected: _habitId == habits[i].id,
-                        onTap: () => setState(() {
-                          _habitId = habits[i].id;
-                          _minutes = habits[i].focusMinutes;
-                          _pomodoro = habits[i].focusBreakMinutes > 0;
-                          if (_pomodoro) {
-                            _breakMinutes = habits[i].focusBreakMinutes;
-                          }
-                        }),
+                        label: workTask.title,
+                        icon: LucideIcons.briefcase,
+                        color: context.colors.primary,
+                        selected: true,
+                        onTap: () {},
                       ),
                     ),
+                  ] else ...[
+                    Entrance(
+                      delay: _entrance,
+                      child: _Label(context.l10n.focus_pick_habit),
+                    ),
+                    Entrance(
+                      index: 1,
+                      delay: _entrance,
+                      child: _HabitOption(
+                        label: context.l10n.focus_free_session,
+                        icon: LucideIcons.timer,
+                        color: context.colors.primary,
+                        selected: _habitId.isEmpty,
+                        onTap: () => setState(() => _habitId = ''),
+                      ),
+                    ),
+                    for (var i = 0; i < habits.length; i++)
+                      Entrance(
+                        index: i + 2,
+                        delay: _entrance,
+                        child: _HabitOption(
+                          label: habits[i].name,
+                          glyph: habits[i].icon,
+                          color: habits[i].color,
+                          selected: _habitId == habits[i].id,
+                          onTap: () => setState(() {
+                            _habitId = habits[i].id;
+                            _minutes = habits[i].focusMinutes;
+                            _pomodoro = habits[i].focusBreakMinutes > 0;
+                            if (_pomodoro) {
+                              _breakMinutes = habits[i].focusBreakMinutes;
+                            }
+                          }),
+                        ),
+                      ),
+                  ],
                   const SizedBox(height: 22),
                   Entrance(
                     index: habits.length + 2,
@@ -205,7 +313,8 @@ class _FocusSetupPageState extends State<FocusSetupPage> {
                         enabled: _pomodoro,
                         breakMinutes: _breakMinutes,
                         onToggle: (v) => setState(() => _pomodoro = v),
-                        onBreakChanged: (v) => setState(() => _breakMinutes = v),
+                        onBreakChanged: (v) =>
+                            setState(() => _breakMinutes = v),
                       ),
                     ),
                   ],
@@ -497,7 +606,9 @@ class _HabitOption extends StatelessWidget {
             decoration: BoxDecoration(
               color: selected
                   ? color.withValues(alpha: 0.12)
-                  : context.colors.surfaceContainerHighest.withValues(alpha: 0.6),
+                  : context.colors.surfaceContainerHighest.withValues(
+                      alpha: 0.6,
+                    ),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: selected ? color : Colors.transparent,
@@ -527,8 +638,7 @@ class _HabitOption extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (selected)
-                  Icon(LucideIcons.check, size: 18, color: color),
+                if (selected) Icon(LucideIcons.check, size: 18, color: color),
               ],
             ),
           ),

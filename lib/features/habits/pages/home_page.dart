@@ -44,6 +44,9 @@ import 'package:streak/features/settings/pages/settings_page.dart';
 import 'package:streak/features/settings/state/settings_controller.dart';
 import 'package:streak/features/statistics/pages/statistics_page.dart';
 import 'package:streak/features/todos/pages/todos_page.dart';
+import 'package:streak/features/work/pages/work_page.dart';
+import 'package:streak/features/goals/pages/goals_page.dart';
+import 'package:streak/features/goals/widgets/related_goals_section.dart';
 import 'package:streak/core/extensions/date_extensions.dart';
 
 class HomePage extends StatefulWidget {
@@ -258,6 +261,7 @@ class _HomePageState extends State<HomePage> {
     final railed = minimal && wide;
     final tight = !minimal && !express && settings.planningEnabled;
     final bigText = MediaQuery.textScalerOf(context).scale(14) > 20;
+    final compactHeader = bigText || MediaQuery.sizeOf(context).width < 380;
     return Scaffold(
       floatingActionButton: express && !_reordering
           ? Padding(
@@ -290,21 +294,23 @@ class _HomePageState extends State<HomePage> {
               )
             : null,
         actions: [
-          if (!_reordering && settings.planningEnabled)
+          if (!_reordering && settings.planningEnabled &&
+              !(minimal && !railed) && !compactHeader)
             IconButton(
               tooltip: context.l10n.day_timeline,
               icon: const Icon(LucideIcons.calendarClock, size: 22),
               visualDensity: VisualDensity.compact,
               onPressed: () => AppNavigator.push(const DayTimelinePage()),
             ),
-          if (!_reordering && settings.notesEnabled)
+          if (!_reordering && settings.notesEnabled &&
+              !(minimal && !railed) && !compactHeader)
             IconButton(
               tooltip: context.l10n.notes_all,
               icon: const Icon(LucideIcons.notebookPen, size: 21),
               visualDensity: VisualDensity.compact,
               onPressed: () => AppNavigator.push(const AllNotesPage()),
             ),
-          if (!minimal && !_reordering)
+          if (!minimal && !_reordering && !compactHeader)
             IconButton(
               tooltip: settings.compactCards
                   ? context.l10n.expand_cards
@@ -319,17 +325,67 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           if (!_reordering)
-            FocusPill(compact: minimal || express, dense: tight),
-          if (minimal && !railed && !_reordering && settings.todosEnabled)
-            IconButton(
-              tooltip: context.l10n.todos,
-              icon: const Icon(LucideIcons.listChecks, size: 22),
-              onPressed: () => AppNavigator.push(const TodosPage()),
+            FocusPill(compact: minimal || express || compactHeader,
+                dense: tight || compactHeader),
+          if (compactHeader && !(minimal && !railed) && !_reordering)
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                switch (value) {
+                  case 'notes':
+                    AppNavigator.push(const AllNotesPage());
+                  case 'plan':
+                    AppNavigator.push(const DayTimelinePage());
+                  case 'cards':
+                    settings.setCompactCards(!settings.compactCards);
+                }
+              },
+              itemBuilder: (_) => [
+                if (settings.notesEnabled)
+                  PopupMenuItem(value: 'notes', child: Text(context.l10n.notes_all)),
+                if (settings.planningEnabled)
+                  PopupMenuItem(value: 'plan', child: Text(context.l10n.day_timeline)),
+                PopupMenuItem(value: 'cards', child: Text(settings.compactCards
+                    ? context.l10n.expand_cards : context.l10n.collapse_cards)),
+              ],
             ),
           if (minimal && !railed && !_reordering)
-            IconButton(
-              icon: const Icon(LucideIcons.chartColumn),
-              onPressed: () => AppNavigator.push(const StatisticsPage()),
+            PopupMenuButton<String>(
+              tooltip: context.l10n.today,
+              onSelected: (page) {
+                switch (page) {
+                  case 'todos':
+                    AppNavigator.push(const TodosPage());
+                  case 'work':
+                    AppNavigator.push(const WorkPage());
+                  case 'stats':
+                    AppNavigator.push(const StatisticsPage());
+                  case 'notes':
+                    AppNavigator.push(const AllNotesPage());
+                  case 'plan':
+                    AppNavigator.push(const DayTimelinePage());
+                }
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(value: 'today', enabled: false,
+                    child: Text(context.l10n.today)),
+                if (settings.todosEnabled)
+                  PopupMenuItem(value: 'todos', child: Text(context.l10n.todos)),
+                if (settings.workEnabled)
+                  PopupMenuItem(value: 'work', child: Text(context.l10n.work)),
+                PopupMenuItem(value: 'stats', child: Text(context.l10n.stats)),
+                if (settings.notesEnabled)
+                  PopupMenuItem(value: 'notes', child: Text(context.l10n.notes_all)),
+                if (settings.planningEnabled)
+                  PopupMenuItem(value: 'plan', child: Text(context.l10n.day_timeline)),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(context.l10n.today, style: Theme.of(context).textTheme.labelLarge),
+                  const SizedBox(width: 4),
+                  const Icon(LucideIcons.chevronDown, size: 16),
+                ]),
+              ),
             ),
           Padding(
             padding: const EdgeInsets.only(right: 16),
@@ -390,7 +446,16 @@ class _HomePageState extends State<HomePage> {
         children: [
           Consumer<HabitsController>(
             builder: (context, controller, _) {
-              if (controller.isEmpty) return const _EmptyState();
+              if (controller.isEmpty) {
+                return ListView(
+                  padding: context.pagePadding(16, 8, 16, 110),
+                  children: [
+                    _goalsEntry(),
+                    const PersonalGoalsSummary(),
+                    const _EmptyState(),
+                  ],
+                );
+              }
 
               final all = controller.habits;
               final today = AppClock.now();
@@ -479,7 +544,7 @@ class _HomePageState extends State<HomePage> {
                         habits: visible,
                         mode: _mode,
                         reordering: _reordering,
-                        header: header,
+                        header: _withGoals(header),
                         onReorder: (oldIndex, newIndex) =>
                             controller.reorder(visible, oldIndex, newIndex),
                         onOpen: _openDetails,
@@ -493,7 +558,7 @@ class _HomePageState extends State<HomePage> {
                     ? MinimalHabitList(
                         habits: visible,
                         mode: _mode,
-                        header: header,
+                        header: _withGoals(header),
                         onOpen: _openDetails,
                         onToggleToday: (habit) => _toggle(habit, today),
                         onToggleDay: _toggle,
@@ -505,7 +570,7 @@ class _HomePageState extends State<HomePage> {
                         habits: visible,
                         mode: _mode,
                         reordering: _reordering,
-                        header: header,
+                        header: _withGoals(header),
                         onReorder: (oldIndex, newIndex) =>
                             controller.reorder(visible, oldIndex, newIndex),
                         onOpen: _openDetails,
@@ -555,6 +620,26 @@ class _HomePageState extends State<HomePage> {
     if (isWideLayout(context)) AppNavigator.paneItem.value = habit.id;
     AppNavigator.push(HabitDetailsPage(habitId: habit.id), fade: true);
   }
+
+  Widget _goalsEntry() => Align(
+    alignment: AlignmentDirectional.centerStart,
+    child: TextButton.icon(
+      onPressed: () => AppNavigator.push(const GoalsPage()),
+      icon: const Icon(LucideIcons.target, size: 18),
+      label: Text(context.l10n.goals_nav_title),
+    ),
+  );
+
+  Widget _withGoals(Widget header) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      header,
+      if (!_reordering) ...[
+        _goalsEntry(),
+        const PersonalGoalsSummary(),
+      ],
+    ],
+  );
 
   Future<void> _toggle(Habit habit, DateTime date) async {
     final controller = context.read<HabitsController>();

@@ -42,16 +42,25 @@ class MinimalNavRail extends StatelessWidget {
             children: [
               brand,
               const SizedBox(height: 28),
-              for (var i = 0; i < items.length; i++)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: _RailTile(
-                    item: items[i],
-                    selected: i == index,
-                    onTap: () => onSelect(i),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < items.length; i++)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: _RailTile(
+                            item: items[i],
+                            selected: i == index,
+                            onTap: () => onSelect(i),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-              if (footer != null) ...[const Spacer(), footer!],
+              ),
+              if (footer != null) footer!,
             ],
           ),
         ),
@@ -85,32 +94,28 @@ class _RailTileState extends State<_RailTile> {
     final scheme = context.colors;
     final tint = selected ? scheme.surface : context.tokens.muted;
 
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: item.label,
-      excludeSemantics: true,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: MinimalPress(
-          onTap: () {
+    return MergeSemantics(child: Tooltip(
+      message: item.label,
+      excludeFromSemantics: true,
+      child: Semantics(
+        selected: selected,
+        child: TextButton(
+          onPressed: () {
             HapticFeedback.selectionClick();
             widget.onTap();
           },
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 240),
-            curve: Curves.easeOutCubic,
+          onHover: (value) => setState(() => _hover = value),
+          style: TextButton.styleFrom(
+            foregroundColor: tint,
+            backgroundColor: selected ? scheme.onSurface
+                : (_hover ? minimalRaised(context) : Colors.transparent),
+            minimumSize: const Size(40, 44),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-            decoration: BoxDecoration(
-              color: selected
-                  ? scheme.onSurface
-                  : _hover
-                  ? minimalRaised(context)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(14),
-            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+          child: Semantics(
+            label: item.label,
+            excludeSemantics: true,
             child: Row(
               children: [
                 Icon(item.icon, size: 18, color: tint),
@@ -128,6 +133,6 @@ class _RailTileState extends State<_RailTile> {
           ),
         ),
       ),
-    );
+    ));
   }
 }

@@ -93,7 +93,8 @@ class IslandLedger {
 
     final perDay = <String, int>{};
     for (final session in sessions) {
-      final key = session.startedAt.dayKey;
+      if (session.isWork || session.isDeleted) continue;
+      final key = session.startedAt.toLocal().dayKey;
       perDay[key] = (perDay[key] ?? 0) + session.minutes;
     }
     var minutes = 0;

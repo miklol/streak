@@ -22,6 +22,9 @@ import 'package:streak/features/settings/state/settings_controller.dart';
 import 'package:streak/features/statistics/pages/statistics_page.dart';
 import 'package:streak/features/todos/pages/todos_page.dart';
 import 'package:streak/features/todos/state/todos_controller.dart';
+import 'package:streak/features/work/pages/work_page.dart';
+import 'package:streak/features/work/state/work_controller.dart';
+import 'package:streak/features/work/state/work_planning_controller.dart';
 import 'package:streak/services/home_widget_service.dart';
 
 class HomeShell extends StatefulWidget {
@@ -31,7 +34,7 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-enum _Tab { today, todos, stats, settings }
+enum _Tab { today, todos, work, stats, settings }
 
 final _paneTab = ValueNotifier(_Tab.today);
 
@@ -120,7 +123,8 @@ class _HomeShellState extends State<HomeShell>
   }
 
   void _swipe(List<_Tab> tabs, double velocity) {
-    final next = tabs.indexOf(_tab) + (velocity < 0 ? 1 : -1);
+    final current = tabs.contains(_tab) ? tabs.indexOf(_tab) : 0;
+    final next = current + (velocity < 0 ? 1 : -1);
     if (next < 0 || next >= tabs.length) return;
     _select(tabs, tabs[next]);
   }
@@ -129,8 +133,13 @@ class _HomeShellState extends State<HomeShell>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       final habits = context.read<HabitsController>();
-      habits.reload().then((_) => HomeWidgetService.sync(habits.asMap));
+      habits.reload().then((_) {
+        if (mounted) context.read<WorkController>().reload();
+        return HomeWidgetService.sync(habits.asMap);
+      });
       context.read<TodosController>().reload();
+      context.read<WorkController>().reload();
+      context.read<WorkPlanningController>().refreshReminders();
       TodayIntro.replay();
       drainFocusActions();
     }
@@ -140,6 +149,8 @@ class _HomeShellState extends State<HomeShell>
   Widget build(BuildContext context) {
     final settings = context.watch<SettingsController>();
     final wide = isWideLayout(context);
+    _swap.duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero : const Duration(milliseconds: 380);
     final minimal = settings.isMinimalStyle;
     if (minimal && !wide) return const Scaffold(body: HomePage());
     final scheme = Theme.of(context).colorScheme;
@@ -147,6 +158,7 @@ class _HomeShellState extends State<HomeShell>
     final tabs = [
       _Tab.today,
       if (settings.todosEnabled) _Tab.todos,
+      if (settings.workEnabled) _Tab.work,
       _Tab.stats,
       _Tab.settings,
     ];
@@ -197,7 +209,11 @@ class _HomeShellState extends State<HomeShell>
             right: 0,
             bottom: MediaQuery.paddingOf(context).bottom + 12,
             child: Center(
-              child: express
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: tabs.length * 60.0 + 100),
+                  child: express
                   ? ExpressNavBar(
                       items: [
                         for (final tab in tabs)
@@ -226,16 +242,20 @@ class _HomeShellState extends State<HomeShell>
                   ],
                 ),
                 child: Row(
-                  mainAxisSize: MainAxisSize.min,
                   children: [
                     for (final tab in tabs)
-                      _NavItem(
-                        icon: _iconOf(tab),
-                        label: _labelOf(context, tab),
-                        selected: tab == current,
-                        onTap: () => _select(tabs, tab),
+                      Expanded(
+                        flex: tab == current ? 2 : 1,
+                        child: _NavItem(
+                          icon: _iconOf(tab),
+                          label: _labelOf(context, tab),
+                          selected: tab == current,
+                          onTap: () => _select(tabs, tab),
+                        ),
                       ),
                   ],
+                ),
+                  ),
                 ),
               ),
             ),
@@ -249,6 +269,7 @@ class _HomeShellState extends State<HomeShell>
 Widget _pageOf(_Tab tab) => switch (tab) {
       _Tab.today => const HomePage(),
       _Tab.todos => const TodosPage(),
+      _Tab.work => const WorkPage(),
       _Tab.stats => const StatisticsPage(),
       _Tab.settings => const SettingsPage(),
     };
@@ -256,6 +277,7 @@ Widget _pageOf(_Tab tab) => switch (tab) {
 IconData _iconOf(_Tab tab) => switch (tab) {
       _Tab.today => LucideIcons.house,
       _Tab.todos => LucideIcons.listChecks,
+      _Tab.work => LucideIcons.briefcase,
       _Tab.stats => LucideIcons.chartColumn,
       _Tab.settings => LucideIcons.settings,
     };
@@ -263,6 +285,7 @@ IconData _iconOf(_Tab tab) => switch (tab) {
 String _labelOf(BuildContext context, _Tab tab) => switch (tab) {
       _Tab.today => context.l10n.today,
       _Tab.todos => context.l10n.todos,
+      _Tab.work => context.l10n.work,
       _Tab.stats => context.l10n.stats,
       _Tab.settings => context.l10n.settings,
     };
@@ -285,70 +308,39 @@ class _NavItem extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final tint = selected ? scheme.primary : context.tokens.muted;
 
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: label,
-      excludeSemantics: true,
-      onTap: onTap,
-      child: GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Center(
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 320),
-              curve: Curves.easeOutCubic,
-              padding: EdgeInsets.symmetric(
-                horizontal: selected ? 18 : 16,
-                vertical: 10,
-              ),
-              decoration: BoxDecoration(
-                color: scheme.primary.withValues(alpha: selected ? 0.16 : 0),
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AnimatedScale(
-                    scale: selected ? 1.08 : 1,
-                    duration: const Duration(milliseconds: 320),
-                    curve: Curves.easeOutBack,
-                    child: Icon(icon, size: 21, color: tint),
-                  ),
-                  ClipRect(
-                    child: AnimatedSize(
-                      duration: const Duration(milliseconds: 320),
-                      curve: Curves.easeOutCubic,
-                      child: selected
-                          ? Padding(
-                              padding: const EdgeInsets.only(left: 8),
-                              child: ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 88),
-                                child: Text(
-                                  label,
-                                  maxLines: 1,
-                                  softWrap: false,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: tint,
-                                  ),
-                                ),
-                              ),
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-                  ),
+    return MergeSemantics(child: Tooltip(
+      message: label,
+      excludeFromSemantics: true,
+      child: Semantics(
+        selected: selected,
+        child: TextButton(
+          onPressed: onTap,
+          style: TextButton.styleFrom(
+            foregroundColor: tint,
+            backgroundColor: scheme.primary.withValues(alpha: selected ? 0.16 : 0),
+            minimumSize: const Size(44, 48),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+          ),
+          child: Semantics(
+            label: label,
+            excludeSemantics: true,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 21),
+                if (selected) ...[
+                  const SizedBox(width: 6),
+                  Flexible(child: Text(label, maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700))),
                 ],
-              ),
+              ],
             ),
           ),
         ),
       ),
-    );
+    ));
   }
 }
 
@@ -562,16 +554,25 @@ class _NavRail extends StatelessWidget {
             children: [
               const _RailBrand(),
               const SizedBox(height: 26),
-              for (final tab in tabs)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: _RailItem(
-                    icon: _iconOf(tab),
-                    label: _labelOf(context, tab),
-                    selected: tab == current,
-                    onTap: () => onSelect(tab),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final tab in tabs)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: _RailItem(
+                            icon: _iconOf(tab),
+                            label: _labelOf(context, tab),
+                            selected: tab == current,
+                            onTap: () => onSelect(tab),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
+              ),
             ],
           ),
         ),

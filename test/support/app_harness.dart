@@ -22,6 +22,9 @@ import 'package:streak/features/island/state/island_controller.dart';
 import 'package:streak/features/settings/state/settings_controller.dart';
 import 'package:streak/features/todos/data/todo.dart';
 import 'package:streak/features/todos/state/todos_controller.dart';
+import 'package:streak/features/work/state/work_controller.dart';
+import 'package:streak/features/goals/state/goals_controller.dart';
+import 'package:streak/features/work/state/work_planning_controller.dart';
 import 'package:streak/l10n/app_localizations.dart';
 
 const _pathProvider = MethodChannel('plugins.flutter.io/path_provider');
@@ -54,6 +57,24 @@ void useEmptyStore() {
 Future<void> coldStart() async {
   await Hive.close();
   await LocalStore.init();
+}
+
+Future<void> settleStoreWrites(WidgetTester tester) async {
+  var finished = false;
+  Object? failure;
+  Future.wait<void>([
+    LocalStore.updateWork((data) => data).then<void>((_) {}),
+    LocalStore.recoverFocusTransition(),
+  ]).then((_) => finished = true, onError: (Object error) {
+    failure = error;
+    finished = true;
+  });
+  for (var i = 0; i < 200 && !finished; i++) {
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+    await tester.pump();
+  }
+  expect(failure, isNull);
+  expect(finished, isTrue, reason: 'Storage operations should finish before closing the store');
 }
 
 Habit testHabit({
@@ -171,6 +192,9 @@ Future<void> pumpScreen(
   Map<String, Object> settings = const {},
   ThemeMode themeMode = ThemeMode.dark,
   double textScale = 1,
+  ThemeData? theme,
+  ThemeData? darkTheme,
+  GlobalKey? previewKey,
 }) async {
   tester.view.physicalSize = const Size(1080, 2340);
   tester.view.devicePixelRatio = 2.75;
@@ -191,15 +215,24 @@ Future<void> pumpScreen(
         ChangeNotifierProvider(create: (_) => CategoriesController()),
         ChangeNotifierProvider(create: (_) => NotesController()),
         ChangeNotifierProvider(create: (_) => TodosController()),
+        ChangeNotifierProvider(create: (_) => WorkController()),
+        ChangeNotifierProvider(
+          create: (context) => WorkPlanningController(
+            context.read<WorkController>(),
+            scheduler: (_) async {},
+          ),
+        ),
         ChangeNotifierProvider(create: (_) => FocusController()),
         ChangeNotifierProvider(create: (_) => IslandController()),
         ChangeNotifierProvider(create: (_) => HabitsController()),
+        ChangeNotifierProvider(create: (context) => GoalsController(
+          context.read<WorkController>(), context.read<HabitsController>())),
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         navigatorKey: AppNavigator.key,
-        theme: AppTheme.light(),
-        darkTheme: AppTheme.dark(),
+        theme: theme ?? AppTheme.light(),
+        darkTheme: darkTheme ?? AppTheme.dark(),
         themeMode: themeMode,
         supportedLocales: AppLocalizations.supportedLocales,
         localizationsDelegates: const [
@@ -211,7 +244,9 @@ Future<void> pumpScreen(
         builder: (context, child) => MediaQuery.withClampedTextScaling(
           minScaleFactor: textScale,
           maxScaleFactor: textScale,
-          child: child!,
+          child: previewKey == null
+              ? child!
+              : RepaintBoundary(key: previewKey, child: child!),
         ),
         home: screen,
       ),

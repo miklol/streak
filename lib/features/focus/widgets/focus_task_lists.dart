@@ -7,13 +7,20 @@ import 'package:provider/provider.dart';
 import 'package:streak/core/extensions/date_extensions.dart';
 import 'package:streak/core/i18n/l10n.dart';
 import 'package:streak/features/focus/state/focus_controller.dart';
+import 'package:streak/features/focus/data/focus_target.dart';
 import 'package:streak/features/habits/data/habit.dart';
 import 'package:streak/features/habits/data/substep.dart';
 import 'package:streak/features/habits/state/habits_controller.dart';
+import 'package:streak/features/work/data/work_task.dart';
+import 'package:streak/features/work/state/work_controller.dart';
+import 'package:streak/features/work/widgets/work_ui.dart';
 
 class FocusTaskList extends StatefulWidget {
   const FocusTaskList({
-    super.key,required this.habit, required this.maxHeight});
+    super.key,
+    required this.habit,
+    required this.maxHeight,
+  });
 
   final Habit habit;
   final double maxHeight;
@@ -60,9 +67,9 @@ class _FocusTaskListState extends State<FocusTaskList> {
             title: _controllers[step.id]?.text.trim() ?? step.title,
           ),
       ];
-      context
-          .read<HabitsController>()
-          .update(widget.habit.copyWith(substeps: steps));
+      context.read<HabitsController>().update(
+        widget.habit.copyWith(substeps: steps),
+      );
     });
   }
 
@@ -73,19 +80,18 @@ class _FocusTaskListState extends State<FocusTaskList> {
     );
     _newStepId = step.id;
     context.read<HabitsController>().update(
-          widget.habit.copyWith(substeps: [...widget.habit.substeps, step]),
-        );
+      widget.habit.copyWith(substeps: [...widget.habit.substeps, step]),
+    );
   }
 
   void _remove(Substep step) {
     _controllers.remove(step.id)?.dispose();
     _focusNodes.remove(step.id)?.dispose();
     context.read<HabitsController>().update(
-          widget.habit.copyWith(
-            substeps:
-                widget.habit.substeps.where((s) => s.id != step.id).toList(),
-          ),
-        );
+      widget.habit.copyWith(
+        substeps: widget.habit.substeps.where((s) => s.id != step.id).toList(),
+      ),
+    );
   }
 
   @override
@@ -148,8 +154,11 @@ class _FocusTaskListState extends State<FocusTaskList> {
                                   ),
                                 ),
                                 child: checked.contains(step.id)
-                                    ? const Icon(LucideIcons.check,
-                                        size: 14, color: Colors.black)
+                                    ? const Icon(
+                                        LucideIcons.check,
+                                        size: 14,
+                                        color: Colors.black,
+                                      )
                                     : null,
                               ),
                             ),
@@ -204,8 +213,11 @@ class _FocusTaskListState extends State<FocusTaskList> {
         Center(
           child: TextButton.icon(
             onPressed: _add,
-            icon: Icon(LucideIcons.plus,
-                size: 16, color: Colors.white.withValues(alpha: 0.75)),
+            icon: Icon(
+              LucideIcons.plus,
+              size: 16,
+              color: Colors.white.withValues(alpha: 0.75),
+            ),
             label: Text(
               context.l10n.focus_tasks,
               style: TextStyle(
@@ -221,10 +233,12 @@ class _FocusTaskListState extends State<FocusTaskList> {
   }
 }
 
-
 class FocusFreeTaskList extends StatefulWidget {
   const FocusFreeTaskList({
-    super.key,required this.focus, required this.maxHeight});
+    super.key,
+    required this.focus,
+    required this.maxHeight,
+  });
 
   final FocusController focus;
   final double maxHeight;
@@ -256,7 +270,8 @@ class _FocusFreeTaskListState extends State<FocusFreeTaskList> {
                           button: true,
                           selected: task.done,
                           child: GestureDetector(
-                            onTap: () => setState(() => focus.toggleTask(task.id)),
+                            onTap: () =>
+                                setState(() => focus.toggleTask(task.id)),
                             behavior: HitTestBehavior.opaque,
                             child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 10),
@@ -274,8 +289,11 @@ class _FocusFreeTaskListState extends State<FocusFreeTaskList> {
                                   ),
                                 ),
                                 child: task.done
-                                    ? const Icon(LucideIcons.check,
-                                        size: 14, color: Colors.black)
+                                    ? const Icon(
+                                        LucideIcons.check,
+                                        size: 14,
+                                        color: Colors.black,
+                                      )
                                     : null,
                               ),
                             ),
@@ -292,8 +310,9 @@ class _FocusFreeTaskListState extends State<FocusFreeTaskList> {
                             style: TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w600,
-                              color: Colors.white
-                                  .withValues(alpha: task.done ? 0.5 : 1),
+                              color: Colors.white.withValues(
+                                alpha: task.done ? 0.5 : 1,
+                              ),
                               decoration: task.done
                                   ? TextDecoration.lineThrough
                                   : null,
@@ -329,8 +348,11 @@ class _FocusFreeTaskListState extends State<FocusFreeTaskList> {
         Center(
           child: TextButton.icon(
             onPressed: () => setState(focus.addTask),
-            icon: Icon(LucideIcons.plus,
-                size: 16, color: Colors.white.withValues(alpha: 0.75)),
+            icon: Icon(
+              LucideIcons.plus,
+              size: 16,
+              color: Colors.white.withValues(alpha: 0.75),
+            ),
             label: Text(
               context.l10n.focus_tasks,
               style: TextStyle(
@@ -342,6 +364,86 @@ class _FocusFreeTaskListState extends State<FocusFreeTaskList> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class FocusWorkTaskList extends StatelessWidget {
+  const FocusWorkTaskList({
+    super.key,
+    required this.target,
+    required this.maxHeight,
+  });
+
+  final FocusTarget target;
+  final double maxHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    final work = context.watch<WorkController>();
+    final owner = work.taskById(target.id);
+    if (owner == null || owner.isDeleted || work.isTaskArchived(owner) ||
+        owner.status == WorkTaskStatus.cancelled) {
+      return Text(context.l10n.work_focus_task_removed,
+          style: const TextStyle(color: Colors.white, fontSize: 14));
+    }
+    final children = work.tasks(
+      parentTaskId: target.id,
+      includeDone: true,
+    );
+    if (children.isEmpty) {
+      return Text(
+        target.title,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w700,
+          color: Colors.white.withValues(alpha: 0.75),
+        ),
+      );
+    }
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: ListView.builder(
+        shrinkWrap: true,
+        itemCount: children.length,
+        itemBuilder: (context, index) {
+          final task = children[index];
+          final done = task.status == WorkTaskStatus.done;
+          return CheckboxListTile(
+            value: done,
+            onChanged: task.status == WorkTaskStatus.cancelled ? null : (_) {
+              final next = done
+                  ? WorkTaskStatus.inProgress
+                  : WorkTaskStatus.done;
+              runWorkAction(context, () => work.setTaskStatus(task.id, next));
+            },
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding: EdgeInsets.zero,
+            activeColor: Colors.white,
+            checkColor: Colors.black,
+            title: Text(
+              task.title,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: done ? 0.5 : 0.9),
+                decoration: done ? TextDecoration.lineThrough : null,
+                decorationColor: Colors.white54,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            subtitle:
+                task.status == WorkTaskStatus.blocked ||
+                    task.status == WorkTaskStatus.cancelled
+                ? Text(
+                    workTaskStatusLabel(context, task.status),
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.55),
+                    ),
+                  )
+                : null,
+          );
+        },
+      ),
     );
   }
 }

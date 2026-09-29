@@ -31,15 +31,18 @@ class FocusService : Service() {
 
         when (intent?.action) {
             ACTION_PAUSE -> {
+                if (!matches(state, intent)) return START_STICKY
                 FocusState.save(this, FocusState.paused(state))
-                FocusBridge.enqueue(this, "pause")
+                FocusBridge.enqueue(this, "pause", state)
             }
             ACTION_RESUME -> {
+                if (!matches(state, intent)) return START_STICKY
                 FocusState.save(this, FocusState.resumed(state))
-                FocusBridge.enqueue(this, "resume")
+                FocusBridge.enqueue(this, "resume", state)
             }
             ACTION_STOP -> {
-                FocusBridge.enqueue(this, "stop")
+                if (!matches(state, intent)) return START_STICKY
+                FocusBridge.enqueue(this, "stop", state)
                 FocusState.clear(this)
                 stop()
                 return START_NOT_STICKY
@@ -144,24 +147,40 @@ class FocusService : Service() {
             builder.addAction(
                 if (running) R.drawable.ic_focus_pause else R.drawable.ic_focus_play,
                 if (running) state.optString("pauseLabel") else state.optString("resumeLabel"),
-                action(if (running) ACTION_PAUSE else ACTION_RESUME, REQUEST_TOGGLE),
+                action(if (running) ACTION_PAUSE else ACTION_RESUME, REQUEST_TOGGLE, state),
             )
         }
         builder.addAction(
             R.drawable.ic_focus_stop,
             state.optString("stopLabel"),
-            action(ACTION_STOP, REQUEST_STOP),
+            action(ACTION_STOP, REQUEST_STOP, state),
         )
 
         return builder.build()
     }
 
-    private fun action(name: String, request: Int): PendingIntent = PendingIntent.getService(
+    private fun action(name: String, request: Int, state: JSONObject): PendingIntent = PendingIntent.getService(
         this,
         request,
-        Intent(this, FocusService::class.java).setAction(name),
+        Intent(this, FocusService::class.java)
+            .setAction(name)
+            .setData(android.net.Uri.parse(
+                "streak://focus/${state.optString("sessionId")}/${state.optString("phaseId")}/$name"
+            ))
+            .putExtra("sessionId", state.optString("sessionId"))
+            .putExtra("phaseId", state.optString("phaseId")),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
+
+    private fun matches(state: JSONObject, intent: Intent?): Boolean {
+        val session = intent?.getStringExtra("sessionId") ?: ""
+        val phase = intent?.getStringExtra("phaseId") ?: ""
+        if (state.optString("targetKind") == "workTask" &&
+            (session.isEmpty() || phase.isEmpty())) return false
+        if (session.isNotEmpty() && session != state.optString("sessionId")) return false
+        if (phase.isNotEmpty() && phase != state.optString("phaseId")) return false
+        return true
+    }
 
     private fun colorFor(phase: String): Int = when (phase) {
         PHASE_BREAK -> R.color.focus_break

@@ -495,6 +495,17 @@ class _ClassicPreferencesPage extends StatelessWidget {
                   ),
                   settingsDivider(context),
                   SettingRow(
+                    icon: LucideIcons.briefcase,
+                    title: context.l10n.work,
+                    subtitle: context.l10n.work_enable_sub,
+                    trailing: Segmented(
+                      options: [context.l10n.off, context.l10n.on],
+                      index: settings.workEnabled ? 1 : 0,
+                      onChanged: (i) => settings.setWorkEnabled(i == 1),
+                    ),
+                  ),
+                  settingsDivider(context),
+                  SettingRow(
                     icon: LucideIcons.palmtree,
                     title: context.l10n.gamification_beta,
                     subtitle: context.l10n.island_enable_sub,

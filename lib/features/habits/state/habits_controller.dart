@@ -84,6 +84,7 @@ class HabitsController extends ChangeNotifier {
   }
 
   Future<void> create({
+    String? id,
     required String name,
     required String icon,
     required String category,
@@ -110,9 +111,12 @@ class HabitsController extends ChangeNotifier {
     int durationMinutes = 0,
     List<Substep> substeps = const [],
   }) async {
-    final id = _uuid.v4();
+    final habitId = id ?? _uuid.v4();
+    if (_habits.containsKey(habitId)) {
+      throw StateError('This habit already exists; update it instead');
+    }
     final habit = Habit(
-      id: id,
+      id: habitId,
       name: name,
       icon: icon,
       category: category,
@@ -140,7 +144,7 @@ class HabitsController extends ChangeNotifier {
       durationMinutes: durationMinutes,
       substeps: substeps,
     );
-    _habits[id] = habit;
+    _habits[habitId] = habit;
     await LocalStore.writeHabit(habit);
     notifyListeners();
     if (reminders.isNotEmpty) await _notifications.scheduleFor(habit);
@@ -411,29 +415,16 @@ class HabitsController extends ChangeNotifier {
   }
 
   Future<void> _applyBackup(BackupData data, {required bool replace}) async {
+    if (data.work != null && !replace) {
+      LocalStore.readWork().merge(data.work!);
+    }
     if (replace) {
       for (final id in _habits.keys.toList()) {
         await _notifications.cancelFor(id);
       }
-      await LocalStore.wipeContent();
-      _habits.clear();
     }
-    for (final habit in data.habits) {
-      _habits[habit.id] = habit;
-      await LocalStore.writeHabit(habit);
-    }
-    for (final category in data.categories) {
-      await LocalStore.writeCategory(category);
-    }
-    for (final note in data.notes) {
-      await LocalStore.writeNote(note);
-    }
-    for (final session in data.focus) {
-      await LocalStore.writeFocusSession(session);
-    }
-    for (final todo in data.todos) {
-      await LocalStore.writeTodo(todo);
-    }
+    await BackupService.restore(data, replace: replace);
+    _habits = LocalStore.readHabits();
     for (final habit in data.habits) {
       if (habit.reminders.isNotEmpty) await _notifications.scheduleFor(habit);
     }

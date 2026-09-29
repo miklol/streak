@@ -14,7 +14,6 @@ object FocusBridge {
 
     private const val PREFS = "HomeWidgetPreferences"
     private const val KEY = "focus_actions"
-    private const val MAX = 50
 
     private var channel: MethodChannel? = null
 
@@ -45,18 +44,29 @@ object FocusBridge {
                 result.success(true)
             }
             "drain" -> result.success(drain(context))
+            "ack" -> {
+                val arguments = call.arguments as? Map<String, Any?>
+                val ids = arguments?.get("ids") as? List<*>
+                ack(context, ids?.filterIsInstance<String>() ?: emptyList())
+                result.success(true)
+            }
             else -> result.notImplemented()
         }
     }
 
-    fun enqueue(context: Context, kind: String) {
+    fun enqueue(context: Context, kind: String, state: JSONObject? = FocusState.read(context)) {
         synchronized(this) {
             val queue = read(context)
-            if (queue.length() >= MAX) return
+            val at = System.currentTimeMillis()
+            val sessionId = state?.optString("sessionId") ?: ""
+            val phaseId = state?.optString("phaseId") ?: ""
             queue.put(
                 JSONObject()
+                    .put("id", "$sessionId:$phaseId:$kind:$at")
                     .put("kind", kind)
-                    .put("at", System.currentTimeMillis()),
+                    .put("at", at)
+                    .put("sessionId", sessionId)
+                    .put("phaseId", phaseId)
             )
             write(context, queue)
         }
@@ -65,12 +75,36 @@ object FocusBridge {
 
     private fun drain(context: Context): List<Map<String, Any>> = synchronized(this) {
         val queue = read(context)
-        write(context, JSONArray())
-        (0 until queue.length()).mapNotNull { index ->
+        var repaired = false
+        val result = (0 until queue.length()).mapNotNull { index ->
             queue.optJSONObject(index)?.let {
-                mapOf("kind" to it.optString("kind"), "at" to it.optLong("at"))
+                if (it.optString("id").isEmpty()) {
+                    it.put("id", "legacy:${it.optString("kind")}:${it.optLong("at")}:$index")
+                    repaired = true
+                }
+                mapOf(
+                    "id" to it.optString("id"),
+                    "kind" to it.optString("kind"),
+                    "at" to it.optLong("at"),
+                    "sessionId" to it.optString("sessionId"),
+                    "phaseId" to it.optString("phaseId"),
+                )
             }
         }
+        if (repaired) write(context, queue)
+        result
+    }
+
+    private fun ack(context: Context, ids: List<String>) = synchronized(this) {
+        if (ids.isEmpty()) return@synchronized
+        val done = ids.toSet()
+        val queue = read(context)
+        val kept = JSONArray()
+        for (index in 0 until queue.length()) {
+            val item = queue.optJSONObject(index) ?: continue
+            if (!done.contains(item.optString("id"))) kept.put(item)
+        }
+        write(context, kept)
     }
 
     private fun notifyDart() {

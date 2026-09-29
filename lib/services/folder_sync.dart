@@ -6,6 +6,8 @@ import 'package:streak/core/database/local_store.dart';
 import 'package:streak/features/habits/data/completion.dart';
 import 'package:streak/features/habits/data/habit.dart';
 import 'package:streak/services/backup_service.dart';
+import 'package:streak/services/backup_conflict.dart';
+import 'package:streak/features/work/data/work_data.dart';
 
 class FolderSync {
   const FolderSync._();
@@ -19,16 +21,32 @@ class FolderSync {
   static Future<int> pull() async {
     final folder = LocalStore.setting('autoBackupFolder', '');
     if (folder.isEmpty) return 0;
+    BackupData? data;
     try {
       final since = DateTime.tryParse(LocalStore.setting(_seenKey, ''));
-      final data = incoming(Directory(folder), since);
+      data = incoming(Directory(folder), since);
       if (data == null) return 0;
       final brought = await _absorb(data);
       await LocalStore.writeSetting(
         _seenKey,
         data.exportedAt!.toIso8601String(),
       );
+      await BackupConflict.clear(folder);
       return brought;
+    } on WorkConflict catch (e) {
+      final source = data?.source;
+      if (source == null) rethrow;
+      await BackupConflict.remember(
+        folder: folder, payload: source, record: e.record,
+      );
+      debugPrint('Shared-folder Work or Goals conflict retained: $e');
+      return 0;
+    } on BackupFormatConflict catch (e) {
+      await BackupConflict.remember(
+        folder: folder, payload: e.payload, record: e.message,
+      );
+      debugPrint('Unsupported or damaged backup retained: $e');
+      return 0;
     } catch (e) {
       debugPrint('Could not read the shared folder: $e');
       return 0;
@@ -36,10 +54,14 @@ class FolderSync {
   }
 
   static BackupData? incoming(Directory dir, DateTime? since) {
+    final pending = BackupConflict.pendingPayload(dir.path);
+    if (pending != null) return BackupService.parse(pending);
     for (final file in backupsIn(dir)) {
       final BackupData data;
       try {
         data = BackupService.parse(file.readAsStringSync());
+      } on BackupFormatConflict {
+        rethrow;
       } catch (e) {
         debugPrint('Skipping ${_name(file)}: $e');
         continue;
@@ -63,6 +85,12 @@ class FolderSync {
   }
 
   static Future<int> _absorb(BackupData data) async {
+    final focus = BackupService.mergeFocusSessions(
+        LocalStore.readFocusSessions(includeDeleted: true), data.focus);
+    final work = data.work;
+    if (work != null) {
+      await LocalStore.updateWork((current) => current.merge(work));
+    }
     final local = LocalStore.readHabits();
     var brought = 0;
 
@@ -84,7 +112,7 @@ class FolderSync {
     for (final note in data.notes) {
       await LocalStore.writeNote(note);
     }
-    for (final session in data.focus) {
+    for (final session in focus) {
       await LocalStore.writeFocusSession(session);
     }
     for (final todo in data.todos) {

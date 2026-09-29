@@ -34,6 +34,7 @@ class ExpressFocusStatsPage extends StatefulWidget {
 
 class _ExpressFocusStatsPageState extends State<ExpressFocusStatsPage> {
   FocusRange _range = FocusRange.week;
+  FocusStatsFilter _filter = FocusStatsFilter.all;
   int _offset = 0;
 
   List<({String name, Color color, int count})> _ranking(
@@ -66,9 +67,25 @@ class _ExpressFocusStatsPageState extends State<ExpressFocusStatsPage> {
       now: AppClock.now(),
       weekStart: context.watch<SettingsController>().weekStart,
       habitId: widget.habitId,
+      filter: _filter,
     );
 
     final sections = <Widget>[
+      if (widget.habitId == null) ...[
+        ExpressTabs(
+          labels: [
+            context.l10n.all,
+            context.l10n.your_habits,
+            context.l10n.work,
+          ],
+          index: FocusStatsFilter.values.indexOf(_filter),
+          onChanged: (index) => setState(() {
+            _filter = FocusStatsFilter.values[index];
+            _offset = 0;
+          }),
+        ),
+        const SizedBox(height: 16),
+      ],
       _TotalHero(stats: stats, accent: accent),
       const SizedBox(height: 20),
       ExpressGroup(

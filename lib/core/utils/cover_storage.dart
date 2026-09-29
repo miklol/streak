@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:streak/core/utils/app_dirs.dart';
+import 'package:streak/core/database/local_store.dart';
 import 'package:streak/core/widgets/cover_image.dart';
 
 class CoverStorage {
@@ -12,7 +13,7 @@ class CoverStorage {
 
   static const imageExtensions = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 
-  static const folders = ['covers', 'journey', 'todos', 'focus'];
+  static const folders = ['covers', 'journey', 'todos', 'focus', 'work'];
 
   static Future<String?> pick() => store(folder: 'covers');
 
@@ -36,7 +37,21 @@ class CoverStorage {
   }
 
   static Future<void> forget(String path) async {
+    await _forget(path, _workPhotos());
+  }
+
+  static Set<String> _workPhotos() => {
+    for (final path in LocalStore.readWork().photoPaths) _photoKey(path),
+  };
+
+  static String _photoKey(String path) {
+    final key = File(_plain(path)).absolute.uri.normalizePath().toString();
+    return Platform.isWindows ? key.toLowerCase() : key;
+  }
+
+  static Future<void> _forget(String path, Set<String> retained) async {
     if (path.isEmpty) return;
+    if (retained.contains(_photoKey(path))) return;
     final clean = path.split('?').first;
     try {
       final dir = await appDataDir();
@@ -50,8 +65,9 @@ class CoverStorage {
   }
 
   static Future<void> forgetAll(Iterable<String> paths) async {
+    final retained = _workPhotos();
     for (final path in paths) {
-      await forget(path);
+      await _forget(path, retained);
     }
   }
 
@@ -59,12 +75,12 @@ class CoverStorage {
     var freed = 0;
     try {
       final dir = await appDataDir();
-      final kept = {for (final path in used) _plain(path)};
+      final kept = {for (final path in used) _photoKey(path)};
       for (final folder in folders) {
         final target = Directory('${dir.path}/$folder');
         if (!target.existsSync()) continue;
         for (final entity in target.listSync()) {
-          if (entity is! File || kept.contains(_plain(entity.path))) continue;
+          if (entity is! File || kept.contains(_photoKey(entity.path))) continue;
           freed += entity.lengthSync();
           entity.deleteSync();
           CoverImage.forget(entity.path);

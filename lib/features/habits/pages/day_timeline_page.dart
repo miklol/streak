@@ -28,18 +28,25 @@ import 'package:streak/features/habits/widgets/day_timeline_parts.dart';
 import 'package:streak/features/habits/widgets/focus_only_dialog.dart';
 import 'package:streak/features/habits/widgets/unscheduled_day_dialog.dart';
 import 'package:streak/features/settings/state/settings_controller.dart';
+import 'package:streak/features/work/data/work_data.dart';
+import 'package:streak/features/work/data/work_day_plan.dart';
+import 'package:streak/features/work/pages/work_task_page.dart';
+import 'package:streak/features/work/state/work_controller.dart';
 
 const _entrance = Duration(milliseconds: 320);
 
 class DayTimelinePage extends StatefulWidget {
-  const DayTimelinePage({super.key});
+  const DayTimelinePage({super.key, this.useCalendarToday = false});
+
+  final bool useCalendarToday;
 
   @override
   State<DayTimelinePage> createState() => _DayTimelinePageState();
 }
 
 class _DayTimelinePageState extends State<DayTimelinePage> {
-  late DateTime _day = AppClock.now().atMidnight;
+  DateTime get _today => widget.useCalendarToday ? AppClock.wallNow() : AppClock.now();
+  late DateTime _day = _today.atMidnight;
   final _celebration = ValueNotifier(0);
 
   @override
@@ -48,13 +55,13 @@ class _DayTimelinePageState extends State<DayTimelinePage> {
     super.dispose();
   }
 
-  bool get _isToday => _day.isSameDay(AppClock.now());
+  bool get _isToday => _day.isSameDay(_today);
 
   void _select(DateTime day) => setState(() => _day = day.atMidnight);
 
   void _shiftWeek(int weeks) => setState(
-        () => _day = DateTime(_day.year, _day.month, _day.day + weeks * 7),
-      );
+    () => _day = DateTime(_day.year, _day.month, _day.day + weeks * 7),
+  );
 
   Future<void> _check(Habit habit) async {
     final controller = context.read<HabitsController>();
@@ -79,8 +86,10 @@ class _DayTimelinePageState extends State<DayTimelinePage> {
 
   Color _neighbourColor(DayPlan plan, int from, int step) {
     for (var i = from; i >= 0 && i < plan.slots.length; i += step) {
-      final habit = plan.slots[i].habit;
+      final slot = plan.slots[i];
+      final habit = slot.habit;
       if (habit != null) return habit.color;
+      if (slot.work != null) return context.colors.primary;
     }
     return context.colors.primary;
   }
@@ -91,20 +100,32 @@ class _DayTimelinePageState extends State<DayTimelinePage> {
     for (var i = 0; i < plan.slots.length; i++) {
       final slot = plan.slots[i];
       final habit = slot.habit;
+      final work = slot.work;
       rows.add(
         Entrance(
           index: index,
           delay: _entrance,
-          child: habit == null
+          child: slot.isGap
               ? TimelineGap(
                   minutes: slot.minutes,
                   from: _neighbourColor(plan, i - 1, -1),
                   to: _neighbourColor(plan, i + 1, 1),
                 )
+              : work != null
+              ? Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: _WorkTimelineBlock(
+                    item: work,
+                    onOpen: () => AppNavigator.push(
+                      WorkTaskPage(taskId: work.task.id),
+                      fade: true,
+                    ),
+                  ),
+                )
               : Padding(
                   padding: const EdgeInsets.symmetric(vertical: 3),
                   child: TimelineBlock(
-                    habit: habit,
+                    habit: habit!,
                     date: _day,
                     done: habit.isCompletedOn(_day),
                     onOpen: () => AppNavigator.push(
@@ -151,8 +172,9 @@ class _DayTimelinePageState extends State<DayTimelinePage> {
   @override
   Widget build(BuildContext context) {
     final habits = context.watch<HabitsController>().habits;
+    final work = context.watch<WorkController>().data;
     final weekStart = context.watch<SettingsController>().weekStart;
-    final plan = DayPlan.of(habits, _day);
+    final plan = DayPlan.of(habits, _day, workData: work);
     final locale = Localizations.localeOf(context).toString();
     final first = _day.startOfWeek(weekStart);
 
@@ -167,10 +189,12 @@ class _DayTimelinePageState extends State<DayTimelinePage> {
         leading: express
             ? Padding(
                 padding: const EdgeInsets.only(left: 16),
-                child: Center(child: ExpressIconButton(
-                  icon: LucideIcons.chevronLeft,
-                  onPressed: () => AppNavigator.pop(),
-                )),
+                child: Center(
+                  child: ExpressIconButton(
+                    icon: LucideIcons.chevronLeft,
+                    onPressed: () => AppNavigator.pop(),
+                  ),
+                ),
               )
             : IconButton(
                 icon: const Icon(LucideIcons.chevronLeft),
@@ -184,16 +208,18 @@ class _DayTimelinePageState extends State<DayTimelinePage> {
             express
                 ? Padding(
                     padding: const EdgeInsets.only(right: 16),
-                    child: Center(child: ExpressIconButton(
-                      icon: LucideIcons.calendarCheck,
-                      tooltip: context.l10n.today,
-                      onPressed: () => _select(AppClock.now()),
-                    )),
+                    child: Center(
+                      child: ExpressIconButton(
+                        icon: LucideIcons.calendarCheck,
+                        tooltip: context.l10n.today,
+                        onPressed: () => _select(_today),
+                      ),
+                    ),
                   )
                 : IconButton(
                     tooltip: context.l10n.today,
                     icon: const Icon(LucideIcons.calendarCheck),
-                    onPressed: () => _select(AppClock.now()),
+                    onPressed: () => _select(_today),
                   ),
         ],
       ),
@@ -220,6 +246,7 @@ class _DayTimelinePageState extends State<DayTimelinePage> {
                 first: first,
                 selected: _day,
                 habits: habits,
+                workData: work,
                 style: style.appStyle,
                 onSelected: _select,
                 onShift: _shiftWeek,
@@ -253,11 +280,138 @@ class _DayTimelinePageState extends State<DayTimelinePage> {
   }
 }
 
+class _WorkTimelineBlock extends StatelessWidget {
+  const _WorkTimelineBlock({required this.item, required this.onOpen});
+
+  final WorkDayPlanItem item;
+  final VoidCallback onOpen;
+
+  String _subtitle(BuildContext context) {
+    final start = minuteLabel(item.startMinute);
+    final end = minuteLabel(item.endMinute);
+    final duration = spanLabel(item.plannedMinutes);
+    final scope = item.contextLabel;
+    final time =
+        '$start - $end  ·  $duration  ·  ${context.l10n.work_plan_day_summary_title}';
+    return scope.isEmpty ? time : '$scope  ·  $time';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = context.colors;
+    final accent = scheme.primary;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: timelineGutter,
+          child: Padding(
+            padding: const EdgeInsetsDirectional.only(top: 14, end: 8),
+            child: Text(
+              minuteLabel(item.startMinute),
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: context.tokens.muted,
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: Semantics(
+            button: true,
+            label: '${context.l10n.work_reminder_open_task}: ${item.title}',
+            child: Material(
+              color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(18),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: onOpen,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        constraints: const BoxConstraints(minHeight: 44),
+                        decoration: BoxDecoration(
+                          color: accent.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(
+                          LucideIcons.briefcase,
+                          color: accent,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              item.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 15.5,
+                                fontWeight: FontWeight.w700,
+                                color: scheme.onSurface,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              _subtitle(context),
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                                color: context.tokens.muted,
+                              ),
+                            ),
+                            if (item.block.note.trim().isNotEmpty) ...[
+                              const SizedBox(height: 3),
+                              Text(
+                                item.block.note.trim(),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: scheme.onSurface,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Icon(
+                        LucideIcons.chevronRight,
+                        size: 18,
+                        color: context.tokens.muted,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _WeekStrip extends StatelessWidget {
   const _WeekStrip({
     required this.first,
     required this.selected,
     required this.habits,
+    required this.workData,
     required this.style,
     required this.onSelected,
     required this.onShift,
@@ -266,6 +420,7 @@ class _WeekStrip extends StatelessWidget {
   final DateTime first;
   final DateTime selected;
   final List<Habit> habits;
+  final WorkData workData;
   final int style;
   final ValueChanged<DateTime> onSelected;
   final ValueChanged<int> onShift;
@@ -306,6 +461,7 @@ class _WeekStrip extends StatelessWidget {
                 first.day + i,
               ).isSameDay(selected),
               habits: habits,
+              workData: workData,
               style: style,
               onTap: onSelected,
             ),
@@ -355,6 +511,7 @@ class _DayChip extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.habits,
+    required this.workData,
     required this.style,
     required this.onTap,
   });
@@ -363,6 +520,7 @@ class _DayChip extends StatelessWidget {
   final String label;
   final bool selected;
   final List<Habit> habits;
+  final WorkData workData;
   final int style;
   final ValueChanged<DateTime> onTap;
 
@@ -376,6 +534,10 @@ class _DayChip extends StatelessWidget {
     final dots = [
       for (final habit in habits)
         if (DayPlan.isDueOn(habit, day) && habit.isPlanned) habit.color,
+      ...WorkPlanProjection.blocksForDay(
+        workData,
+        day,
+      ).map((_) => scheme.primary),
     ].take(4).toList();
 
     return Semantics(
@@ -396,24 +558,24 @@ class _DayChip extends StatelessWidget {
                   borderRadius: BorderRadius.circular(selected ? 22 : 14),
                 )
               : minimal
-                  ? BoxDecoration(
-                      color: selected
-                          ? scheme.onSurface
-                          : scheme.surfaceContainerHighest.withValues(
-                              alpha: 0.5,
-                            ),
-                      borderRadius: BorderRadius.circular(12),
-                    )
-                  : BoxDecoration(
-                      color: selected ? accent.withValues(alpha: 0.12) : null,
-                      borderRadius: BorderRadius.circular(11),
-                      border: Border.all(
-                        color: selected
-                            ? accent
-                            : scheme.outlineVariant.withValues(alpha: 0.5),
-                        width: selected ? 1.5 : 1,
-                      ),
-                    ),
+              ? BoxDecoration(
+                  color: selected
+                      ? scheme.onSurface
+                      : scheme.surfaceContainerHighest.withValues(
+                          alpha: 0.5,
+                        ),
+                  borderRadius: BorderRadius.circular(12),
+                )
+              : BoxDecoration(
+                  color: selected ? accent.withValues(alpha: 0.12) : null,
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(
+                    color: selected
+                        ? accent
+                        : scheme.outlineVariant.withValues(alpha: 0.5),
+                    width: selected ? 1.5 : 1,
+                  ),
+                ),
           child: MediaQuery.withClampedTextScaling(
             maxScaleFactor: 1.2,
             child: Column(
@@ -434,18 +596,18 @@ class _DayChip extends StatelessWidget {
                               : context.tokens.muted,
                         )
                       : minimal
-                          ? MinimalType.label(
-                              size: 10.5,
-                              color: selected
-                                  ? scheme.surface
-                                  : context.tokens.muted,
-                            )
-                          : TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w700,
-                              height: 1.1,
-                              color: selected ? accent : context.tokens.muted,
-                            ),
+                      ? MinimalType.label(
+                          size: 10.5,
+                          color: selected
+                              ? scheme.surface
+                              : context.tokens.muted,
+                        )
+                      : TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          height: 1.1,
+                          color: selected ? accent : context.tokens.muted,
+                        ),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -458,30 +620,30 @@ class _DayChip extends StatelessWidget {
                           color: selected
                               ? scheme.onPrimary
                               : today
-                                  ? scheme.onSurface
-                                  : context.tokens.muted,
+                              ? scheme.onSurface
+                              : context.tokens.muted,
                           tabular: true,
                         )
                       : minimal
-                          ? MinimalType.figure(
-                              16,
-                              height: 1.1,
-                              color: selected
-                                  ? scheme.surface
-                                  : today
-                                      ? scheme.onSurface
-                                      : context.tokens.muted,
-                            )
-                          : TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              height: 1.1,
-                              color: selected
-                                  ? accent
-                                  : today
-                                      ? scheme.onSurface
-                                      : context.tokens.muted,
-                            ),
+                      ? MinimalType.figure(
+                          16,
+                          height: 1.1,
+                          color: selected
+                              ? scheme.surface
+                              : today
+                              ? scheme.onSurface
+                              : context.tokens.muted,
+                        )
+                      : TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          height: 1.1,
+                          color: selected
+                              ? accent
+                              : today
+                              ? scheme.onSurface
+                              : context.tokens.muted,
+                        ),
                 ),
                 const SizedBox(height: 4),
                 SizedBox(
